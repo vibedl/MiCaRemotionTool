@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "Room Flythrough Studio main window",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://localhost:*/**",
+      "http://127.0.0.1:*/**"
+    ]
+  },
+  "permissions": ["core:default"]
+}

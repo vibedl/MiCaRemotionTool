@@ -1,0 +1,10 @@
+node_modules
+out
+uploads
+jobs
+dist-webapp
+dist-mac
+dist-win
+.remotion
+Alt/src-tauri/target
+Alt/src-tauri/resources/studio

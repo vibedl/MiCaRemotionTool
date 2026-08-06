@@ -1,0 +1,53 @@
+{
+  "name": "room-flythrough",
+  "version": "1.0.0",
+  "description": "Room Flythrough Studio — pure web app (Vite + Express + Remotion)",
+  "scripts": {
+    "dev": "remotion studio",
+    "render": "remotion render RoomFlythrough out/room-flythrough.mp4",
+    "still": "remotion still RoomFlythrough out/still.png",
+    "server": "node server/index.mjs",
+    "webapp": "vite",
+    "build": "vite build",
+    "build:webapp": "vite build",
+    "start": "node server/index.mjs",
+    "studio": "concurrently -n server,webapp -c blue,green \"pnpm run server\" \"pnpm run webapp\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": true,
+  "packageManager": "pnpm@10.11.1",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@remotion/bundler": "^4.0.496",
+    "@remotion/cli": "^4.0.496",
+    "@remotion/player": "^4.0.496",
+    "@remotion/renderer": "^4.0.496",
+    "@remotion/three": "^4.0.496",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "multer": "^2.2.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "remotion": "^4.0.496",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.2.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^10.0.3",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.21"
+  }
+}

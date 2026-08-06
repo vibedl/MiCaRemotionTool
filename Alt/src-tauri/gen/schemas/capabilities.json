@@ -1,0 +1,1 @@
+{"main-capability":{"identifier":"main-capability","description":"Room Flythrough Studio main window","remote":{"urls":["http://localhost:*/**","http://127.0.0.1:*/**"]},"local":true,"windows":["main"],"permissions":["core:default"]}}
