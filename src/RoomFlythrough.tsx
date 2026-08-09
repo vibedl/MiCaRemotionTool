@@ -10,6 +10,10 @@ export const DEFAULT_GLOSS: GlossConfig = { strength: 0.35, sharpness: 0.5, refl
 /** Flat by default; raise for a global cardboard/relief thickness on all shapes. */
 export const DEFAULT_EXTRUSION_DEPTH = 0;
 
+/** 1×1 transparent PNG — used when a job has rooms but no shapes yet. */
+const TRANSPARENT_PIXEL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
 export type RoomFlythroughProps = {
   pictures: PictureDef[];
   /** Morph length between two consecutive pictures, in frames. */
@@ -81,11 +85,48 @@ export const RoomFlythrough: React.FC<RoomFlythroughProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { width, height, durationInFrames } = useVideoConfig();
+  const camera = resolveCamera(frame, cameraKeyframes);
+
+  if (rooms.length === 0) {
+    return (
+      <AbsoluteFill
+        style={{
+          backgroundColor: "#1a1d24",
+          color: "#9aa1af",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "system-ui, sans-serif",
+          fontSize: 28,
+          textAlign: "center",
+          padding: 48,
+        }}
+      >
+        Kein Projekt geladen — Prep nutzen oder Medien hinzufügen.
+      </AbsoluteFill>
+    );
+  }
 
   const holds = distributePictureHolds(durationInFrames, pictures.length, transitionFrames);
   const pictureState = pictureStateAtFrame(frame, holds, transitionFrames);
   const roomState = roomStateAtFrame(frame, rooms, crossfadeFrames);
-  const camera = resolveCamera(frame, cameraKeyframes);
+
+  // Shapes optional: RoomScene still needs at least one picture texture hook —
+  // inject a transparent 1×1 when empty so rooms-only preview works.
+  const safePictures =
+    pictures.length > 0
+      ? pictures
+      : [
+          {
+            label: "",
+            src: TRANSPARENT_PIXEL,
+            scaleX: 0.01,
+            scaleY: 0.01,
+            aspectLock: true,
+            offsetX: 0,
+            offsetY: 0,
+          },
+        ];
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#2a2a2a" }}>
@@ -102,8 +143,8 @@ export const RoomFlythrough: React.FC<RoomFlythroughProps> = ({
         }}
       >
         <RoomScene
-          pictures={pictures}
-          pictureState={pictureState}
+          pictures={safePictures}
+          pictureState={pictures.length > 0 ? pictureState : { fromIndex: 0, toIndex: 0, mix: 0 }}
           rooms={rooms}
           roomState={roomState}
           camera={camera}

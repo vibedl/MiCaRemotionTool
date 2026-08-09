@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Room Flythrough Prep</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo">Prep</span>
+      <div>
+        <h1>Room Flythrough Prep</h1>
+        <p class="sub">Hintergründe + Shapes → freistellen → Job fürs Studio</p>
+      </div>
+    </div>
+    <div class="top__actions">
+      <button type="button" class="btn" id="btnNewJob" title="Alles zurücksetzen und von vorn starten">
+        Neuen Job beginnen
+      </button>
+      <a class="link" href="http://127.0.0.1:5183" target="_blank" rel="noopener">Studio öffnen</a>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card" id="step-upload">
+      <h2>1. Bilder reinwerfen</h2>
+      <p class="hint">Räume (ohne Transparenz) und Shapes (Motiv, noch ohne Alpha) — gemischt ok.</p>
+      <label class="drop" id="dropzone">
+        <input type="file" id="fileInput" accept="image/*" multiple hidden />
+        <span>Dateien wählen oder hierher ziehen</span>
+      </label>
+      <p class="status" id="uploadStatus"></p>
+    </section>
+
+    <section class="card is-hidden" id="step-classify">
+      <h2>2. Typ festlegen &amp; freistellen</h2>
+      <p class="hint">Pro Shape: Cutout-Modus wählen. „Form behalten“ ohne rembg, „Motiv freistellen“ mit BiRefNet, „Form-Vorlage“ schneidet mit Maske.</p>
+      <div class="form-row">
+        <label>Kante erhalten (nur Motiv freistellen)
+          <input type="range" id="edgeGrow" min="1" max="5" step="1" value="3" />
+          <span id="edgeGrowVal">3</span>
+        </label>
+      </div>
+      <div class="grid" id="itemGrid"></div>
+      <div class="actions">
+        <button type="button" class="btn" id="btnSaveKinds">Typen speichern</button>
+        <button type="button" class="btn btn-primary" id="btnMatte">Shapes freistellen</button>
+      </div>
+      <p class="status" id="matteStatus"></p>
+    </section>
+
+    <section class="card is-hidden" id="step-build">
+      <h2>3. Vorschau, Größe &amp; Job</h2>
+      <div class="form-row">
+        <label>Job-Name
+          <input type="text" id="jobName" value="prep-job" />
+        </label>
+        <label>Wandbild-Größe
+          <input type="range" id="wallSize" min="0.4" max="1.4" step="0.01" value="0.85" />
+          <span id="wallSizeVal">0.85</span>
+        </label>
+      </div>
+
+      <div class="preview is-hidden" id="previewBox">
+        <div class="preview__stage" id="previewStage">
+          <img class="preview__room" id="previewRoom" alt="" />
+          <img class="preview__shape" id="previewShape" alt="" />
+        </div>
+        <div class="preview__thumbs" id="previewThumbs"></div>
+        <p class="hint">Vorschau: erster Raum + gewähltes Shape. Größe wie im Studio (Wandbild-Größe).</p>
+      </div>
+
+      <div class="presets" id="presetList"></div>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" id="btnBuild" disabled>Job erzeugen &amp; Studio öffnen</button>
+      </div>
+      <p class="status" id="buildStatus"></p>
+      <div class="result is-hidden" id="buildResult"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

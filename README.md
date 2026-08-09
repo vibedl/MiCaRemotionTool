@@ -45,6 +45,30 @@ corepack pnpm start
 
 `PUBLIC_ORIGIN` ist nur nötig, wenn Job-Dateien absolute Media-URLs brauchen. Ohne Variable bleiben relative Pfade (`/uploads/…`).
 
+## Prep-Tool (optional, davor)
+
+Opake Fotos freistellen und als Studio-Job ablegen — **separat**, Studio braucht kein Python:
+
+Siehe [prep/README.md](prep/README.md)
+
+| | |
+|---|---|
+| macOS | `prep/Setup Prep.command` → `prep/Start Prep.command` |
+| Windows | `prep/Setup Prep.bat` → `prep/Start Prep.bat` |
+| UI | http://127.0.0.1:4400 |
+
+Pro Shape: Form behalten / Motiv freistellen / Form-Vorlage; gemeinsame Wandbild-Größe für alle Shapes.
+
+## Weiterarbeit am Mac
+
+1. Repo von der T7 öffnen **oder** `git pull` (Remote: `origin`).
+2. `corepack enable && corepack pnpm install` — **kein** Windows-`node_modules` wiederverwenden.
+3. Studio: `Start Studio.command` oder `corepack pnpm studio` → http://127.0.0.1:5183
+4. Optional Prep: einmal `prep/Setup Prep.command`, dann `prep/Start Prep.command` → http://127.0.0.1:4400
+5. Falls `.command`-Dateien nicht starten: im Terminal `chmod +x "Start Studio.command" "prep/Setup Prep.command" "prep/Start Prep.command"`
+
+Python-venv und `node_modules` gehören auf die interne Mac-SSD (`~/.venvs/…`), nicht auf die exFAT-T7.
+
 ## Funktionen
 
 - Hintergründe (Räume) und Shapes (Bilder) per Upload hinzufügen — **unabhängig vom Dateinamen**

@@ -6,8 +6,12 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
-/** Resolve media URLs returned by the server (relative paths) for the Player. */
+/** Resolve media URLs / portable job refs for the Player and thumbnails. */
 export function mediaUrl(url: string): string {
-  if (/^https?:\/\//i.test(url)) return url;
+  if (!url) return url;
+  if (/^https?:\/\//i.test(url) || url.startsWith("data:")) return url;
+  if (url.startsWith("upload:")) return apiUrl(`/uploads/${url.slice("upload:".length)}`);
+  if (url.startsWith("asset:")) return apiUrl(`/assets/${url.slice("asset:".length)}`);
+  if (url.startsWith("media:")) return apiUrl(`/media/${encodeURIComponent(url.slice("media:".length))}`);
   return apiUrl(url);
 }

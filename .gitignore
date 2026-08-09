@@ -8,3 +8,12 @@ dist-win
 .remotion
 Alt/src-tauri/target
 Alt/src-tauri/resources/studio
+prep/data/inbox
+prep/data/matted
+prep/data/_smoke
+prep/__pycache__
+prep/**/__pycache__
+*.pyc
+.venv
+.DS_Store
+Thumbs.db

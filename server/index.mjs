@@ -32,6 +32,17 @@ const COMPOSITION_ID = "RoomFlythrough";
 /** Public origin for absolute media refs inside job files (optional). Empty = relative paths. */
 const PUBLIC_ORIGIN = (process.env.PUBLIC_ORIGIN || "").replace(/\/$/, "");
 
+/**
+ * Origin used when Remotion headless Chromium loads textures.
+ * Relative paths like /assets/... only work behind the Vite proxy — Remotion's
+ * bundle serve URL has no such routes, so we rewrite to this absolute base.
+ */
+const RENDER_MEDIA_ORIGIN = (
+  process.env.RENDER_MEDIA_ORIGIN ||
+  PUBLIC_ORIGIN ||
+  `http://127.0.0.1:${PORT}`
+).replace(/\/$/, "");
+
 if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -54,8 +65,53 @@ app.use("/assets", express.static(path.join(PROJECT_ROOT, "public", "assets")));
 app.use("/out", express.static(OUT_DIR));
 
 let lastScannedFolder = null;
-/** @type {Map<string, {status: "rendering"|"done"|"error", progress: number, outputPath?: string, downloadUrl?: string, error?: string}>} */
+/**
+ * @typedef {{
+ *   status: "bundling"|"rendering"|"done"|"error",
+ *   progress: number,
+ *   phase?: string,
+ *   outputPath?: string,
+ *   downloadUrl?: string,
+ *   error?: string
+ * }} RenderJobState
+ */
+/** @type {Map<string, RenderJobState>} */
 const jobs = new Map();
+
+/** @param {string} src */
+function absoluteMediaUrl(src) {
+  if (!src || typeof src !== "string") return src;
+  if (src.startsWith("data:")) return src;
+  // Absolute URL from the Vite player (e.g. http://localhost:5183/assets/…) —
+  // Remotion headless has no Vite proxy; re-host on the Express media origin.
+  if (/^https?:\/\//i.test(src)) {
+    try {
+      const u = new URL(src);
+      return `${RENDER_MEDIA_ORIGIN}${u.pathname}${u.search}`;
+    } catch {
+      return src;
+    }
+  }
+  const pathPart = src.startsWith("/") ? src : `/${src}`;
+  return `${RENDER_MEDIA_ORIGIN}${pathPart}`;
+}
+
+/** Remotion cannot resolve Vite-proxied relative media URLs — rewrite for headless render. */
+function absolutizeJobProps(jobProps) {
+  if (!jobProps || typeof jobProps !== "object") return jobProps;
+  const next = { ...jobProps };
+  if (Array.isArray(next.rooms)) {
+    next.rooms = next.rooms.map((room) =>
+      room && typeof room === "object" ? { ...room, src: absoluteMediaUrl(room.src) } : room,
+    );
+  }
+  if (Array.isArray(next.pictures)) {
+    next.pictures = next.pictures.map((pic) =>
+      pic && typeof pic === "object" ? { ...pic, src: absoluteMediaUrl(pic.src) } : pic,
+    );
+  }
+  return next;
+}
 
 app.get("/api/scan", (req, res) => {
   const folder = String(req.query.folder ?? "");
@@ -97,11 +153,13 @@ app.post("/api/render", (req, res) => {
   const safeName = (outputName || "room-flythrough").replace(/[^a-zA-Z0-9_-]/g, "_");
   const outputPath = path.join(OUT_DIR, `${safeName}-${jobId.slice(0, 8)}.mp4`);
 
-  jobs.set(jobId, { status: "rendering", progress: 0 });
+  jobs.set(jobId, { status: "bundling", progress: 0, phase: "Bundle wird erstellt…" });
   res.json({ jobId });
 
   runRender({ jobId, jobProps, durationInFrames, outputPath }).catch((err) => {
-    jobs.set(jobId, { status: "error", progress: 0, error: err instanceof Error ? err.message : String(err) });
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[render ${jobId}] failed:`, err);
+    jobs.set(jobId, { status: "error", progress: 0, error: message });
   });
 });
 
@@ -212,12 +270,29 @@ app.get("/api/jobs", (_req, res) => {
 });
 
 async function runRender({ jobId, jobProps, durationInFrames, outputPath }) {
-  const bundleLocation = await bundle({ entryPoint: ENTRY_POINT });
+  const inputProps = absolutizeJobProps(jobProps);
+  console.log(`[render ${jobId}] bundling… media origin=${RENDER_MEDIA_ORIGIN}`);
+
+  jobs.set(jobId, { status: "bundling", progress: 0, phase: "Bundle wird erstellt…" });
+  const bundleLocation = await bundle({
+    entryPoint: ENTRY_POINT,
+    onProgress: (progress) => {
+      // Remotion bundle onProgress is already 0–100
+      jobs.set(jobId, {
+        status: "bundling",
+        progress: Math.min(100, Math.round(progress)),
+        phase: "Bundle wird erstellt…",
+      });
+    },
+  });
+
+  jobs.set(jobId, { status: "bundling", progress: 100, phase: "Composition wird geladen…" });
+  console.log(`[render ${jobId}] selecting composition…`);
 
   const metadata = await selectComposition({
     serveUrl: bundleLocation,
     id: COMPOSITION_ID,
-    inputProps: jobProps,
+    inputProps,
     chromiumOptions: { gl: "angle" },
   });
 
@@ -225,15 +300,25 @@ async function runRender({ jobId, jobProps, durationInFrames, outputPath }) {
     ? { ...metadata, durationInFrames: Number(durationInFrames) }
     : metadata;
 
+  jobs.set(jobId, { status: "rendering", progress: 0, phase: "Frames werden gerendert…" });
+  console.log(
+    `[render ${jobId}] rendering ${composition.durationInFrames} frames → ${outputPath}`,
+  );
+
   await renderMedia({
     composition,
     serveUrl: bundleLocation,
     codec: "h264",
     outputLocation: outputPath,
-    inputProps: jobProps,
+    inputProps,
     chromiumOptions: { gl: "angle" },
+    timeoutInMilliseconds: 120_000,
     onProgress: ({ progress }) => {
-      jobs.set(jobId, { status: "rendering", progress: Math.round(progress * 100) });
+      jobs.set(jobId, {
+        status: "rendering",
+        progress: Math.round(progress * 100),
+        phase: "Frames werden gerendert…",
+      });
     },
   });
 
@@ -241,9 +326,11 @@ async function runRender({ jobId, jobProps, durationInFrames, outputPath }) {
   jobs.set(jobId, {
     status: "done",
     progress: 100,
+    phase: "Fertig",
     outputPath,
     downloadUrl,
   });
+  console.log(`[render ${jobId}] done → ${outputPath}`);
 }
 
 // Production: serve the built Vite app from the same origin as the API.

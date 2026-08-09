@@ -257,8 +257,14 @@ export function nameFromJobPath(filePath, jobFile) {
 }
 
 export function readJobFromJobsDir(projectRoot, name) {
-  const filePath = path.join(jobsDir(projectRoot), `${sanitizeJobName(name)}.json`);
-  return readJsonIfExists(filePath);
+  const safe = sanitizeJobName(name);
+  const dir = jobsDir(projectRoot);
+  // Studio writes `{name}.json`; Prep / portable exports may use the long suffix.
+  for (const filePath of [path.join(dir, `${safe}.json`), path.join(dir, namedJobFilename(safe))]) {
+    const data = readJsonIfExists(filePath);
+    if (data) return data;
+  }
+  return null;
 }
 
 /** List named job files inside a shapes folder. */

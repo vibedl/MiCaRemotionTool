@@ -38,6 +38,10 @@ export function writeAutosave(snapshot: JobSnapshot) {
   );
 }
 
+export function clearAutosave() {
+  localStorage.removeItem(AUTOSAVE_KEY);
+}
+
 export function buildPortableJob(snapshot: Omit<JobSnapshot, "savedAt">): PortableJobFile {
   return {
     version: 1,
