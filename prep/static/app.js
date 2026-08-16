@@ -184,6 +184,23 @@ function syncCutoutVisibility(tile, item) {
   tmplField.classList.toggle("is-hidden", !isShape || item.cutoutMode !== "template");
 }
 
+function shapesReady() {
+  const shapes = state.items.filter((i) => i.kind === "shape");
+  return shapes.length > 0 && shapes.every((i) => i.mattedUrl);
+}
+
+function syncBuildEnabled() {
+  const ready = shapesReady();
+  state.matted = ready;
+  $("btnBuild").disabled = !ready;
+}
+
+function invalidateItemMatte(item) {
+  item.mattedUrl = null;
+  item.meta = null;
+  item.scale = null;
+}
+
 function renderItems() {
   const grid = $("itemGrid");
   grid.innerHTML = "";
@@ -222,19 +239,34 @@ function renderItems() {
 
     tile.querySelector("[data-role=kind]").addEventListener("change", (e) => {
       item.kind = e.target.value;
+      invalidateItemMatte(item);
       syncCutoutVisibility(tile, item);
+      syncBuildEnabled();
       updatePreview();
+      // Refresh thumb to source if matte cleared
+      tile.querySelector("img").src = item.mattedUrl || item.url;
     });
     tile.querySelector("[data-role=cutout]").addEventListener("change", (e) => {
       item.cutoutMode = e.target.value;
+      invalidateItemMatte(item);
       syncCutoutVisibility(tile, item);
+      syncBuildEnabled();
+      tile.querySelector("img").src = item.mattedUrl || item.url;
+      updatePreview();
     });
     tile.querySelector("[data-role=template]").addEventListener("change", (e) => {
       item.templateId = e.target.value;
+      if (item.cutoutMode === "template") {
+        invalidateItemMatte(item);
+        syncBuildEnabled();
+        tile.querySelector("img").src = item.mattedUrl || item.url;
+        updatePreview();
+      }
     });
     syncCutoutVisibility(tile, item);
     grid.appendChild(tile);
   }
+  syncBuildEnabled();
   updatePreview();
 }
 
@@ -280,9 +312,12 @@ async function saveKinds() {
       body: JSON.stringify(classifyPayload()),
     });
     state.items = data.items;
-    setStatus($("matteStatus"), "Typen gespeichert.", "ok");
+    syncBuildEnabled();
+    setStatus($("matteStatus"), shapesReady() ? "Typen gespeichert." : "Typen gespeichert — ggf. erneut freistellen.", "ok");
+    return true;
   } catch (e) {
     setStatus($("matteStatus"), e.message, "error");
+    return false;
   }
 }
 
@@ -290,7 +325,7 @@ async function runMatte() {
   setStatus($("matteStatus"), "Freistellen läuft (je nach Modus)…");
   $("btnMatte").disabled = true;
   try {
-    await saveKinds();
+    if (!(await saveKinds())) return;
     const data = await api(`/api/session/${state.sessionId}/matte`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -300,8 +335,7 @@ async function runMatte() {
       }),
     });
     state.items = data.items;
-    state.matted = true;
-    $("btnBuild").disabled = false;
+    syncBuildEnabled();
     renderItems();
     setStatus($("matteStatus"), `${data.matted.length} Shape(s) verarbeitet.`, "ok");
   } catch (e) {
@@ -316,7 +350,7 @@ async function buildJob() {
   $("buildResult").classList.add("is-hidden");
   $("btnBuild").disabled = true;
   try {
-    await saveKinds();
+    if (!(await saveKinds())) return;
     const studioBase = "http://127.0.0.1:5183";
     const data = await api(`/api/session/${state.sessionId}/build`, {
       method: "POST",
@@ -348,7 +382,7 @@ async function buildJob() {
   } catch (e) {
     setStatus($("buildStatus"), e.message, "error");
   } finally {
-    $("btnBuild").disabled = !state.matted;
+    syncBuildEnabled();
   }
 }
 

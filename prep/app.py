@@ -22,7 +22,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageFilter
+from PIL import Image, ImageChops, ImageFilter
 from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
@@ -144,6 +144,9 @@ def _count_opaque(img: Image.Image, threshold: int = 16) -> int:
 
 
 def _crop_and_save(composed: Image.Image, dest: Path, *, edge_grow: int = 0, mode: str = "matte") -> dict:
+    """Crop to opaque content. Scale uses the tight bbox (no pad) so gallery
+    proportions match the real silhouette; a tiny pad is only for export bleed.
+    """
     canvas_w, canvas_h = composed.size
     bbox = composed.getbbox()
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -154,6 +157,7 @@ def _crop_and_save(composed: Image.Image, dest: Path, *, edge_grow: int = 0, mod
             "height": canvas_h,
             "bbox": None,
             "croppedSize": [canvas_w, canvas_h],
+            "contentSize": [canvas_w, canvas_h],
             "canvasSize": [canvas_w, canvas_h],
             "opaquePixels": 0,
             "edgeGrow": edge_grow,
@@ -161,9 +165,10 @@ def _crop_and_save(composed: Image.Image, dest: Path, *, edge_grow: int = 0, mod
         }
 
     x0, y0, x1, y1 = bbox
-    bw = max(1, x1 - x0)
-    bh = max(1, y1 - y0)
-    pad = max(2, int(round(max(bw, bh) * 0.03)))
+    content_w = max(1, x1 - x0)
+    content_h = max(1, y1 - y0)
+    # 1–2px pad only — percent pad used to inflate aspect and shrink shapes.
+    pad = 2 if mode == "matte" else 1
     cx0 = max(0, x0 - pad)
     cy0 = max(0, y0 - pad)
     cx1 = min(canvas_w, x1 + pad)
@@ -174,7 +179,9 @@ def _crop_and_save(composed: Image.Image, dest: Path, *, edge_grow: int = 0, mod
         "width": cropped.width,
         "height": cropped.height,
         "bbox": [cx0, cy0, cx1, cy1],
-        "croppedSize": [cropped.width, cropped.height],
+        "croppedSize": [content_w, content_h],
+        "contentSize": [content_w, content_h],
+        "paddedSize": [cropped.width, cropped.height],
         "canvasSize": [canvas_w, canvas_h],
         "opaquePixels": _count_opaque(cropped),
         "edgeGrow": edge_grow,
@@ -216,9 +223,7 @@ def _corner_flood_mask(img: Image.Image, thresh: int = 42) -> Image.Image:
 def preserve_form(src: Path, dest: Path) -> dict:
     """Keep existing silhouette — no rembg. Use alpha if present, else corner flood."""
     img = Image.open(src).convert("RGBA")
-    alpha = img.getchannel("A")
-    amin, amax = alpha.getextrema()
-    if amin < 250:
+    if _has_meaningful_alpha(img):
         composed = img
     else:
         mask = _corner_flood_mask(img)
@@ -228,40 +233,51 @@ def preserve_form(src: Path, dest: Path) -> dict:
     return _crop_and_save(composed, dest, mode="preserve")
 
 
-def apply_template(src: Path, dest: Path, template_id: str) -> dict:
-    """Cover-fit photo into a shape mask template, then crop."""
+def _resolve_template_path(template_id: str) -> Path:
     safe = sanitize_name(template_id)
     tmpl_path = TEMPLATES_DIR / f"{safe}.png"
-    if not tmpl_path.exists():
-        # try case-insensitive match
-        found = None
-        for p in TEMPLATES_DIR.glob("*.png"):
-            if p.stem.lower() == safe.lower() or p.stem.lower() == template_id.lower():
-                found = p
-                break
-        if not found:
-            raise ValueError(f"Unbekannte Form-Vorlage: {template_id}")
-        tmpl_path = found
+    if tmpl_path.exists():
+        return tmpl_path
+    for p in TEMPLATES_DIR.glob("*.png"):
+        if p.stem.lower() == safe.lower() or p.stem.lower() == template_id.lower():
+            return p
+    raise ValueError(f"Unbekannte Form-Vorlage: {template_id}")
 
+
+def apply_template(src: Path, dest: Path, template_id: str) -> dict:
+    """Cover-fit photo into the opaque mask bbox (not full padded canvas), then crop."""
+    tmpl_path = _resolve_template_path(template_id)
     photo = Image.open(src).convert("RGBA")
     tmpl = Image.open(tmpl_path).convert("RGBA")
     mask = tmpl.getchannel("A")
     tw, th = tmpl.size
+    mb = mask.getbbox()
+    if not mb:
+        raise ValueError(f"Form-Vorlage ohne Alpha: {template_id}")
+    mx0, my0, mx1, my1 = mb
+    bw, bh = max(1, mx1 - mx0), max(1, my1 - my0)
+
+    # Cover-fit into the opaque bbox only — padding around the silhouette
+    # must not dilute how much of the photo lands inside the shape.
     pw, ph = photo.size
-    scale = max(tw / max(1, pw), th / max(1, ph))
+    scale = max(bw / max(1, pw), bh / max(1, ph))
     nw, nh = max(1, int(round(pw * scale))), max(1, int(round(ph * scale)))
     resized = photo.resize((nw, nh), Image.Resampling.LANCZOS)
-    left = max(0, (nw - tw) // 2)
-    top = max(0, (nh - th) // 2)
-    fitted = resized.crop((left, top, left + tw, top + th))
-    if fitted.size != (tw, th):
-        fitted = fitted.resize((tw, th), Image.Resampling.LANCZOS)
-    fitted.putalpha(mask)
-    return _crop_and_save(fitted, dest, mode="template")
+    left = max(0, (nw - bw) // 2)
+    top = max(0, (nh - bh) // 2)
+    fitted = resized.crop((left, top, left + bw, top + bh))
+    if fitted.size != (bw, bh):
+        fitted = fitted.resize((bw, bh), Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
+    region_mask = mask.crop((mx0, my0, mx1, my1))
+    fitted.putalpha(region_mask)
+    canvas.paste(fitted, (mx0, my0), fitted)
+    return _crop_and_save(canvas, dest, mode="template")
 
 
 def remove_background(src: Path, dest: Path, edge_grow: int = 3) -> dict:
-    """Cut out the subject; keep original RGB, grow mask, crop to content."""
+    """Cut out the subject with soft BiRefNet alpha; grow without hard binary edges."""
     from rembg import remove
 
     img = Image.open(src).convert("RGBA")
@@ -270,17 +286,26 @@ def remove_background(src: Path, dest: Path, edge_grow: int = 3) -> dict:
         mask = Image.open(BytesIO(mask_raw))
     else:
         mask = mask_raw
-    mask = mask.convert("L")
-    mask = mask.point(lambda p: 255 if p >= 8 else 0)
+    soft = mask.convert("L")
 
     grow = max(1, min(5, int(edge_grow)))
+    # Grow on a mid-threshold binary so morphology is stable, then keep the
+    # softer rembg edge where it already covers the subject.
+    binary = soft.point(lambda p: 255 if p >= 24 else 0)
     for _ in range(grow):
-        mask = mask.filter(ImageFilter.MaxFilter(3))
-    mask = mask.filter(ImageFilter.MaxFilter(3))
-    mask = mask.filter(ImageFilter.MinFilter(3))
+        binary = binary.filter(ImageFilter.MaxFilter(3))
+    binary = binary.filter(ImageFilter.MaxFilter(3))
+    binary = binary.filter(ImageFilter.MinFilter(3))
+
+    soft_grown = soft
+    for _ in range(max(1, grow - 1)):
+        soft_grown = soft_grown.filter(ImageFilter.MaxFilter(3))
+    # Union: dilated solid core + soft fringe from rembg
+    combined = ImageChops.lighter(soft_grown, binary)
+    combined = combined.filter(ImageFilter.GaussianBlur(radius=0.7))
 
     composed = img.copy()
-    composed.putalpha(mask)
+    composed.putalpha(combined)
     return _crop_and_save(composed, dest, edge_grow=grow, mode="matte")
 
 
@@ -436,19 +461,48 @@ class MatteBody(BaseModel):
     wallSize: float = Field(default=0.85, ge=0.4, le=1.4)
 
 
+def _has_meaningful_alpha(img: Image.Image) -> bool:
+    """True when alpha defines a silhouette (not just fully opaque / junk)."""
+    if "A" not in img.getbands():
+        return False
+    alpha = img.convert("RGBA").getchannel("A")
+    amin, amax = alpha.getextrema()
+    if amax <= 0 or amin >= 250:
+        return False
+    data = list(alpha.getdata())
+    step = max(1, len(data) // 80_000)
+    soft = sum(1 for i in range(0, len(data), step) if data[i] < 250)
+    return soft * step > max(64, len(data) // 200)
+
+
 def _default_cutout_mode(path: Path) -> CutoutMode:
     """Prefer preserve when the source already has a real alpha silhouette."""
     try:
         with Image.open(path) as img:
-            if "A" not in img.getbands():
-                return "matte"
-            alpha = img.convert("RGBA").getchannel("A")
-            amin, amax = alpha.getextrema()
-            if amin < 250 and amax > 0:
+            if _has_meaningful_alpha(img):
                 return "preserve"
     except Exception:  # noqa: BLE001
         pass
     return "matte"
+
+
+def _suggest_kind(path: Path, filename: str) -> str:
+    lower = filename.lower()
+    if any(k in lower for k in ("bg", "room", "raum", "hintergrund", "wall", "wand", "kulisse")):
+        return "room"
+    if any(k in lower for k in ("shape", "bild", "pic", "mask", "herz", "stern", "form", "motiv")):
+        return "shape"
+    try:
+        with Image.open(path) as img:
+            if _has_meaningful_alpha(img):
+                return "shape"
+            w, h = img.size
+            # Wide, large, opaque photos are usually room backgrounds.
+            if w >= 1200 and h >= 800 and (w / max(1, h)) >= 1.25:
+                return "room"
+    except Exception:  # noqa: BLE001
+        pass
+    return "shape"
 
 
 def _default_template_id() -> str | None:
@@ -477,14 +531,7 @@ async def create_session(files: list[UploadFile] = File(...)):
         item_id = uuid.uuid4().hex[:10]
         dest = session_dir / f"{item_id}{ext}"
         save_upload(f, dest)
-        # Heuristic suggestion: filenames containing bg/room/hintergrund → room
-        lower = raw_name.lower()
-        if any(k in lower for k in ("bg", "room", "raum", "hintergrund", "wall", "wand")):
-            suggested = "room"
-        elif any(k in lower for k in ("shape", "bild", "pic", "mask", "herz", "stern")):
-            suggested = "shape"
-        else:
-            suggested = "shape"
+        suggested = _suggest_kind(dest, raw_name)
         items.append(
             {
                 "id": item_id,
@@ -547,6 +594,21 @@ def get_matted_file(session_id: str, item_id: str):
     return FileResponse(path, media_type="image/png")
 
 
+def _clear_matte(item: dict) -> None:
+    item["mattedUrl"] = None
+    item["mattedPath"] = None
+    item["meta"] = None
+    item["scale"] = None
+    item.pop("mattedCutoutMode", None)
+    item.pop("mattedTemplateId", None)
+
+
+def _cutout_fingerprint(item: dict) -> tuple[str, str | None]:
+    mode = (item.get("cutoutMode") or "matte").lower()
+    tmpl = item.get("templateId") if mode == "template" else None
+    return (mode, tmpl)
+
+
 @app.post("/api/session/{session_id}/classify")
 def classify(session_id: str, body: ClassifyBody):
     if body.sessionId != session_id:
@@ -556,12 +618,20 @@ def classify(session_id: str, body: ClassifyBody):
         raise HTTPException(404, "Unbekannte Session.")
     by_id = {i["id"]: i for i in s["items"]}
     for entry in body.items:
-        if entry.id in by_id:
-            by_id[entry.id]["kind"] = entry.kind
-            if entry.cutoutMode is not None:
-                by_id[entry.id]["cutoutMode"] = entry.cutoutMode
-            if entry.templateId is not None:
-                by_id[entry.id]["templateId"] = entry.templateId
+        if entry.id not in by_id:
+            continue
+        item = by_id[entry.id]
+        prev_kind = item.get("kind")
+        prev_fp = _cutout_fingerprint(item)
+        item["kind"] = entry.kind
+        if entry.cutoutMode is not None:
+            item["cutoutMode"] = entry.cutoutMode
+        if entry.templateId is not None:
+            item["templateId"] = entry.templateId
+        # Kind/mode/template change invalidates prior cutout — avoid wrong PNG in build.
+        if item["kind"] != "shape" or prev_kind != item["kind"] or prev_fp != _cutout_fingerprint(item):
+            if item.get("mattedPath") or item.get("mattedUrl"):
+                _clear_matte(item)
     return {"items": _public_items(session_id)}
 
 
@@ -594,6 +664,8 @@ def matte_shapes(session_id: str, body: MatteBody = MatteBody()):
         item["meta"] = meta
         item["mattedUrl"] = f"/api/session/{session_id}/matted/{item['id']}"
         item["mattedPath"] = str(dest)
+        item["mattedCutoutMode"] = mode
+        item["mattedTemplateId"] = item.get("templateId")
         item["scale"] = compute_shape_scale(meta, wall_size=wall_size)
         results.append(
             {
@@ -625,6 +697,17 @@ def build_job(session_id: str, body: BuildBody):
     for sh in shapes:
         if not sh.get("mattedPath") or not Path(sh["mattedPath"]).exists():
             raise HTTPException(400, "Zuerst Shapes freistellen (Matte).")
+        mode = (sh.get("cutoutMode") or "matte").lower()
+        if sh.get("mattedCutoutMode") and sh.get("mattedCutoutMode") != mode:
+            raise HTTPException(
+                400,
+                f"„{sh['label']}“: Cutout-Modus geändert — bitte erneut freistellen.",
+            )
+        if mode == "template" and sh.get("mattedTemplateId") and sh.get("mattedTemplateId") != sh.get("templateId"):
+            raise HTTPException(
+                400,
+                f"„{sh['label']}“: Form-Vorlage geändert — bitte erneut freistellen.",
+            )
 
     preset = CAMERA_PRESETS.get(body.cameraPreset)
     if not preset:
