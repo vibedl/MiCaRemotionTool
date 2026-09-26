@@ -18,7 +18,16 @@ import {
   saveJobLocally,
   writeAutosave,
 } from "./jobStorage";
-import { apiUrl, mediaUrl, uploadFile } from "./clientApi";
+import {
+  apiUrl,
+  detectServer,
+  inlineBlobSrc,
+  mediaUrl,
+  portableAssetSrc,
+  storeImage,
+  type ServerConfig,
+} from "./clientApi";
+import { renderInBrowser } from "./browserRender";
 import { useEditorHistory } from "./useEditorHistory";
 import { AutoBuilder, type AutoBuildResult } from "./AutoBuilder";
 
@@ -45,6 +54,17 @@ type ServerJobEntry = {
 };
 
 type SizeTarget = { kind: "picture" | "room"; index: number };
+
+/** Rewrites bundled `/assets/…` refs so they also load from a sub-path (GitHub Pages). */
+function withPortableAssets(job: RoomFlythroughProps): RoomFlythroughProps {
+  return {
+    ...job,
+    pictures: job.pictures.map((p) => ({ ...p, src: portableAssetSrc(p.src) })),
+    rooms: job.rooms.map((r) => ({ ...r, src: portableAssetSrc(r.src) })),
+  };
+}
+
+const initialJob = withPortableAssets(defaultJobProps);
 
 function moveItem<T>(list: T[], index: number, direction: -1 | 1): T[] {
   const target = index + direction;
@@ -98,7 +118,7 @@ export const App: React.FC = () => {
     canUndo,
     canRedo,
     resetHistory,
-  } = useEditorHistory({ job: defaultJobProps, durationInFrames: DURATION_IN_FRAMES });
+  } = useEditorHistory({ job: initialJob, durationInFrames: DURATION_IN_FRAMES });
 
   const [activeFrame, setActiveFrame] = useState(job.cameraKeyframes[0]?.frame ?? 0);
   const [selectedRoomIndex, setSelectedRoomIndex] = useState<number | null>(0);
@@ -154,6 +174,11 @@ export const App: React.FC = () => {
   const [serverJobs, setServerJobs] = useState<ServerJobEntry[]>([]);
   const [renderState, setRenderState] = useState<RenderStatus>({ status: "idle", progress: 0 });
   const [renderJobId, setRenderJobId] = useState<string | null>(null);
+  /** Browser render result (static mode): object URL + file name for the download link. */
+  const [localVideo, setLocalVideo] = useState<{ url: string; filename: string } | null>(null);
+  /** undefined = still checking, null = no backend (static hosting). */
+  const [server, setServer] = useState<ServerConfig | null | undefined>(undefined);
+  const serverFs = Boolean(server?.serverFs);
   const pollRef = useRef<number | null>(null);
   const autosaveTimer = useRef<number | null>(null);
   const skipAutosave = useRef(true);
@@ -168,7 +193,7 @@ export const App: React.FC = () => {
       path?: string;
     }) => {
       resetHistory({
-        job: loaded.job,
+        job: withPortableAssets(loaded.job),
         durationInFrames: loaded.durationInFrames ?? DURATION_IN_FRAMES,
       });
       if (loaded.outputName) setOutputName(loaded.outputName);
@@ -184,6 +209,7 @@ export const App: React.FC = () => {
   );
 
   const refreshServerJobs = useCallback(async () => {
+    if (!(await detectServer())) return;
     try {
       const res = await fetch(apiUrl("/api/jobs"));
       const data = await res.json();
@@ -224,7 +250,13 @@ export const App: React.FC = () => {
   const saveLocal = useCallback(async () => {
     setSaveMessage(null);
     try {
-      const portable = buildPortableJob({ folder, jobName, durationInFrames, outputName, job });
+      // Images that only live in this browser tab get embedded into the file.
+      const inlined: RoomFlythroughProps = {
+        ...job,
+        pictures: await Promise.all(job.pictures.map(async (p) => ({ ...p, src: await inlineBlobSrc(p.src) }))),
+        rooms: await Promise.all(job.rooms.map(async (r) => ({ ...r, src: await inlineBlobSrc(r.src) }))),
+      };
+      const portable = buildPortableJob({ folder, jobName, durationInFrames, outputName, job: inlined });
       const name = await saveJobLocally(portable);
       setLastSavedAt(portable.updatedAt);
       setDirty(false);
@@ -370,6 +402,20 @@ export const App: React.FC = () => {
         if (pollRef.current) window.clearInterval(pollRef.current);
         setRenderState({ status: "rendering", progress: 0 });
         setRenderJobId(null);
+        setLocalVideo((prev) => {
+          if (prev) URL.revokeObjectURL(prev.url);
+          return null;
+        });
+
+        if (!(await detectServer())) {
+          const { blob, extension } = await renderInBrowser(renderJob, renderDuration, (progress) =>
+            setRenderState({ status: "rendering", progress }),
+          );
+          const safeName = (outputName || "room-flythrough").replace(/[^a-zA-Z0-9_-]/g, "_");
+          setLocalVideo({ url: URL.createObjectURL(blob), filename: `${safeName}.${extension}` });
+          setRenderState({ status: "done", progress: 100 });
+          return;
+        }
 
         const res = await fetch(apiUrl("/api/render"), {
           method: "POST",
@@ -417,12 +463,8 @@ export const App: React.FC = () => {
     [setJob, setDurationInFrames, startRender],
   );
 
-  const [serverFs, setServerFs] = useState(false);
   useEffect(() => {
-    fetch(apiUrl("/api/config"))
-      .then((r) => r.json())
-      .then((c) => setServerFs(Boolean(c.serverFs)))
-      .catch(() => setServerFs(false));
+    void detectServer().then(setServer);
   }, []);
 
   const activeSizeItem =
@@ -492,13 +534,15 @@ export const App: React.FC = () => {
                 <button type="button" className="secondary" onClick={redo} disabled={!canRedo} title="Strg+Y">
                   Wiederholen
                 </button>
-                <button type="button" onClick={saveToServer}>
-                  Speichern (Server)
-                </button>
+                {server && (
+                  <button type="button" onClick={saveToServer}>
+                    Speichern (Server)
+                  </button>
+                )}
                 <button type="button" className="secondary" onClick={saveLocal}>
-                  Speichern (lokal)
+                  {server ? "Speichern (lokal)" : "Projekt speichern"}
                 </button>
-                <FilePickerButton label="Laden (lokal)…" accept=".json,application/json" onFiles={loadLocalFiles} />
+                <FilePickerButton label={server ? "Laden (lokal)…" : "Projekt laden…"} accept=".json,application/json" onFiles={loadLocalFiles} />
               </div>
               {serverJobs.length > 0 && (
                 <label className="field">
@@ -521,9 +565,11 @@ export const App: React.FC = () => {
                   </select>
                 </label>
               )}
-              <button type="button" className="secondary" onClick={() => void refreshServerJobs()}>
-                Server-Liste aktualisieren
-              </button>
+              {server && (
+                <button type="button" className="secondary" onClick={() => void refreshServerJobs()}>
+                  Server-Liste aktualisieren
+                </button>
+              )}
               {currentJobPath && (
                 <p className="hint">
                   Server-Datei: <code>{currentJobPath}</code>
@@ -642,14 +688,14 @@ export const App: React.FC = () => {
               label="+ Bild hinzufügen"
               multiple
               onFiles={async (files) => {
-                const uploaded = await Promise.all(files.map(uploadFile));
+                const uploaded = await Promise.all(files.map(storeImage));
                 setJob((p) => {
                   const start = p.pictures.length;
                   const next: PictureDef[] = [
                     ...p.pictures,
                     ...uploaded.map((u) => ({
                       label: u.label,
-                      src: mediaUrl(u.url),
+                      src: u.src,
                       scaleX: 1,
                       scaleY: 1,
                       aspectLock: true,
@@ -766,7 +812,7 @@ export const App: React.FC = () => {
               label="+ Raum hinzufügen"
               multiple
               onFiles={async (files) => {
-                const uploaded = await Promise.all(files.map(uploadFile));
+                const uploaded = await Promise.all(files.map(storeImage));
                 setJob((p) => {
                   const start = p.rooms.length;
                   const perRoom = Math.floor(durationInFrames / (p.rooms.length + uploaded.length));
@@ -774,7 +820,7 @@ export const App: React.FC = () => {
                     ...p.rooms,
                     ...uploaded.map((u) => ({
                       label: u.label,
-                      src: mediaUrl(u.url),
+                      src: u.src,
                       holdFrames: perRoom,
                       scaleX: 1,
                       scaleY: 1,
@@ -1135,7 +1181,11 @@ export const App: React.FC = () => {
               Dateiname
               <input type="text" value={outputName} onChange={(e) => setOutputName(e.target.value)} />
             </label>
-            <p className="hint">Das Video wird auf dem Server gerendert — danach Download.</p>
+            <p className="hint">
+              {server === null
+                ? "Das Video wird direkt hier im Browser gerendert (am besten Chrome oder Edge). Tab bis zum Ende offen lassen."
+                : "Das Video wird auf dem Server gerendert — danach Download."}
+            </p>
             <button type="button" className="primary" onClick={() => void startRender()} disabled={renderState.status === "rendering"}>
               {renderState.status === "rendering"
                 ? renderState.queuePosition
@@ -1151,7 +1201,14 @@ export const App: React.FC = () => {
             {renderState.status === "done" && (
               <p className="success">
                 Fertig
-                {renderState.downloadUrl || renderJobId ? (
+                {localVideo ? (
+                  <>
+                    {" — "}
+                    <a href={localVideo.url} download={localVideo.filename}>
+                      {localVideo.filename.endsWith(".mp4") ? "MP4" : "WebM"} herunterladen
+                    </a>
+                  </>
+                ) : renderState.downloadUrl || renderJobId ? (
                   <>
                     {" — "}
                     <a href={apiUrl(renderState.downloadUrl ?? `/api/render/${renderJobId}/download`)} download>

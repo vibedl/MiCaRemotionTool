@@ -280,6 +280,7 @@ function getBundle() {
  * so those paths must point back at Express explicitly.
  */
 function absolutizeSrc(src) {
+  if (typeof src === "string" && src.startsWith("./")) src = src.slice(1);
   if (typeof src !== "string" || !src.startsWith("/")) return src;
   return `${INTERNAL_ORIGIN}${src}`;
 }

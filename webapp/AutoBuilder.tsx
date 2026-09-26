@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { RoomFlythroughProps } from "../src/RoomFlythrough";
 import { autoBuildJob, DEFAULT_AUTO_OPTIONS, type AnalyzedImage } from "../src/autoBuild";
 import { SliderField } from "./SliderField";
-import { mediaUrl, uploadFile } from "./clientApi";
+import { storeImage } from "./clientApi";
 import { analyzeImageFile, type ImageInfo } from "./imageAnalysis";
 
 type Kind = "room" | "picture";
@@ -77,10 +77,8 @@ export const AutoBuilder: React.FC<Props> = ({ fps, base, onBuild, renderBusy })
             const detected: Kind = info.hasTransparency ? "picture" : "room";
             setItems((prev) => prev.map((it) => (it.id === id ? { ...it, kind: detected } : it)));
           }
-          const uploaded = await uploadFile(file);
-          setItems((prev) =>
-            prev.map((it) => (it.id === id ? { ...it, status: "ready", info, src: mediaUrl(uploaded.url) } : it)),
-          );
+          const stored = await storeImage(file);
+          setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: "ready", info, src: stored.src } : it)));
         } catch (e) {
           setItems((prev) =>
             prev.map((it) =>
