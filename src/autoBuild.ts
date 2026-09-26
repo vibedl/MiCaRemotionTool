@@ -42,13 +42,17 @@ export const DEFAULT_AUTO_OPTIONS: Omit<AutoBuildOptions, "fps"> = {
 const PLANE_SIZE = 10;
 const CAMERA_DISTANCE = 8;
 const MIN_FOV = 15;
-const MAX_FOV = 30;
+const MAX_FOV = 52;
+/** Establishing shot when a new room starts: most of the room photo is visible. */
+const WIDE_FOV = 50;
+/** Pull back a little at the end of each room so the cut to the next one breathes. */
+const OUTRO_FOV = 42;
 const MIN_ROOM_SECONDS = 2.5;
 const MIN_HOLD_FRAMES = 10;
 /** Longest side (world units) of a plain artwork without a shape mask. */
 const ARTWORK_SIZE = 1.8;
 /** Visible frame height relative to the picture size it frames. */
-const FRAMING = 1.9;
+const FRAMING = 2.8;
 /** A transparent PNG whose visible area fills most of its canvas is artwork, not a wall mask. */
 const MASK_MAX_BOUNDS_AREA = 0.5;
 
@@ -103,8 +107,10 @@ function fovForSize(size: number) {
   return clamp(deg, MIN_FOV, MAX_FOV);
 }
 
-/** Half the visible frame height at the widest FOV — pan must keep this inside the room. */
-const MAX_VISIBLE_HALF = CAMERA_DISTANCE * Math.tan(((MAX_FOV / 2) * Math.PI) / 180);
+/** Half the visible frame height at `fov` — pan must keep this inside the room photo. */
+function visibleHalf(fov: number) {
+  return CAMERA_DISTANCE * Math.tan(((fov / 2) * Math.PI) / 180);
+}
 
 export function autoBuildJob(
   rooms: AnalyzedImage[],
@@ -203,12 +209,13 @@ export function autoBuildJob(
     };
   });
 
-  // --- Camera: frame each picture, slow push-in + gentle orbit per hold -----
+  // --- Camera: establish each room wide, then push in on every picture -----
   const keyframes: CameraKeyframe[] = [];
   pictures.forEach((img, i) => {
-    const room = roomDefs[roomOfPicture[i]] ?? roomDefs[0];
-    const limitX = Math.max(0, (PLANE_SIZE / 2) * (room.scaleX ?? 1) - MAX_VISIBLE_HALF - 0.2);
-    const limitY = Math.max(0, (PLANE_SIZE / 2) * (room.scaleY ?? 1) - MAX_VISIBLE_HALF - 0.2);
+    const roomIndex = roomOfPicture[i];
+    const room = roomDefs[roomIndex] ?? roomDefs[0];
+    const firstInRoom = i === 0 || roomOfPicture[i - 1] !== roomIndex;
+    const lastInRoom = i === n - 1 || roomOfPicture[i + 1] !== roomIndex;
     const target = pictureTarget(img, pictureDefs[i]);
     const fov = fovForSize(target.size);
     const side = i % 2 === 0 ? 1 : -1;
@@ -217,15 +224,24 @@ export function autoBuildJob(
     const start = holdStart(i);
     // Hold ends where the morph starts; without morphs the next hold starts there instead.
     const end = Math.min(start + holds[i] - (transition === 0 ? 1 : 0), durationInFrames - 1);
-    const pose = (t: 0 | 1): Omit<CameraKeyframe, "frame"> => ({
-      position: [
-        round(clamp(target.x + (t === 0 ? drift : -drift) * side, -limitX, limitX)),
-        round(clamp(target.y + (t === 0 ? drift * 0.4 : -drift * 0.4), -limitY, limitY)),
-        CAMERA_DISTANCE,
-      ],
-      rotation: [round(t === 0 ? 3 * side : -1.5 * side, 2), round(t === 0 ? 0.5 : 0.2, 2)],
-      fov: round(clamp(t === 0 ? fov * 1.05 : fov * 0.95, MIN_FOV, MAX_FOV), 2),
-    });
+    const pose = (t: 0 | 1): Omit<CameraKeyframe, "frame"> => {
+      let f = t === 0 ? fov * 1.05 : fov * 0.95;
+      if (t === 0 && firstInRoom) f = WIDE_FOV;
+      if (t === 1 && lastInRoom && !firstInRoom) f = Math.max(f, OUTRO_FOV);
+      f = clamp(f, MIN_FOV, MAX_FOV);
+      // Keep the whole frame inside the room photo (small margin for the orbit).
+      const limitX = Math.max(0, (PLANE_SIZE / 2) * (room.scaleX ?? 1) - visibleHalf(f) - 0.3);
+      const limitY = Math.max(0, (PLANE_SIZE / 2) * (room.scaleY ?? 1) - visibleHalf(f) - 0.3);
+      return {
+        position: [
+          round(clamp(target.x + (t === 0 ? drift : -drift) * side, -limitX, limitX)),
+          round(clamp(target.y + (t === 0 ? drift * 0.4 : -drift * 0.4), -limitY, limitY)),
+          CAMERA_DISTANCE,
+        ],
+        rotation: [round(t === 0 ? 3 * side : -1.5 * side, 2), round(t === 0 ? 0.5 : 0.2, 2)],
+        fov: round(f, 2),
+      };
+    };
 
     keyframes.push({ frame: start, ...pose(0) });
     if (end > start) keyframes.push({ frame: end, ...pose(1) });
