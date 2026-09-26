@@ -25,17 +25,25 @@ export function readAutosave(): JobSnapshot | null {
   try {
     const raw = localStorage.getItem(AUTOSAVE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as JobSnapshot;
+    const snap = JSON.parse(raw) as JobSnapshot;
+    // Images kept only in the browser (blob:) are gone after a reload.
+    const srcs = [...(snap.job?.pictures ?? []), ...(snap.job?.rooms ?? [])].map((i) => i.src);
+    if (srcs.some((src) => src.startsWith("blob:"))) return null;
+    return snap;
   } catch {
     return null;
   }
 }
 
 export function writeAutosave(snapshot: JobSnapshot) {
-  localStorage.setItem(
-    AUTOSAVE_KEY,
-    JSON.stringify({ ...snapshot, savedAt: new Date().toISOString() }),
-  );
+  try {
+    localStorage.setItem(
+      AUTOSAVE_KEY,
+      JSON.stringify({ ...snapshot, savedAt: new Date().toISOString() }),
+    );
+  } catch {
+    // Quota exceeded (e.g. inlined images) or storage blocked — autosave is best effort.
+  }
 }
 
 export function buildPortableJob(snapshot: Omit<JobSnapshot, "savedAt">): PortableJobFile {

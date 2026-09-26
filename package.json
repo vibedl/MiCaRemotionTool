@@ -6,7 +6,7 @@
     "dev": "remotion studio",
     "render": "remotion render RoomFlythrough out/room-flythrough.mp4",
     "still": "remotion still RoomFlythrough out/still.png",
-    "server": "node server/index.mjs",
+    "server": "node server/index.mjs --local",
     "webapp": "vite",
     "build": "vite build",
     "build:webapp": "vite build",
@@ -20,7 +20,9 @@
   "private": true,
   "packageManager": "pnpm@10.11.1",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
@@ -30,6 +32,7 @@
     "@remotion/player": "^4.0.496",
     "@remotion/renderer": "^4.0.496",
     "@remotion/three": "^4.0.496",
+    "@remotion/web-renderer": "4.0.505",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "multer": "^2.2.0",

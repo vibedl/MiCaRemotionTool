@@ -29,6 +29,9 @@ importers:
       '@remotion/three':
         specifier: ^4.0.496
         version: 4.0.505(@react-three/fiber@9.7.0(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(three@0.185.1))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(remotion@4.0.505(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(three@0.185.1)
+      '@remotion/web-renderer':
+        specifier: 4.0.505
+        version: 4.0.505(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       cors:
         specifier: ^2.8.6
         version: 2.8.6
