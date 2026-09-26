@@ -6,7 +6,7 @@
     "dev": "remotion studio",
     "render": "remotion render RoomFlythrough out/room-flythrough.mp4",
     "still": "remotion still RoomFlythrough out/still.png",
-    "server": "node server/index.mjs",
+    "server": "node server/index.mjs --local",
     "webapp": "vite",
     "build": "vite build",
     "build:webapp": "vite build",

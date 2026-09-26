@@ -2,6 +2,22 @@
 
 Reine Web-App: Vite-Frontend + Express-Backend + Remotion/Three.js. Läuft lokal und auf einem Server.
 
+## Schnellstart: reinwerfen → fertige Animation
+
+Oben in der App liegt der **Schnellstart**:
+
+1. Räume (Fotos) und Wandbilder (freigestellte PNGs) auf die Seite ziehen — oder gezielt in die Felder
+   „Räume“ / „Wandbilder“. Ohne Zielfeld wird automatisch erkannt: Bild mit Transparenz = Wandbild,
+   deckendes Foto = Raum. Falsch erkannt? Mit ⇄ umschalten.
+2. Die Animation baut sich sofort selbst: Gesamtlänge, Morphs, Raumwechsel (jeweils mitten im Morph),
+   Größen nach Seitenverhältnis und ein Kamerapfad, der jedes Wandbild anfährt (langsamer Push-in +
+   leichter Schwenk). Tempo über „Sekunden pro Wandbild“ einstellen.
+3. **Bauen & Video rendern** → MP4 herunterladen.
+
+Wandbilder, die als Maske in Raumgröße exportiert sind (Shape an seiner Position, Rest transparent),
+landen exakt an ihrer Stelle im Raum. Deckende Bilder (z. B. JPG) werden als Wandbild mittig platziert.
+Alles bleibt danach im Editor unten manuell nachjustierbar.
+
 ## Voraussetzungen
 
 - Node.js (inkl. Corepack)
@@ -44,6 +60,23 @@ corepack pnpm start
 ```
 
 `PUBLIC_ORIGIN` ist nur nötig, wenn Job-Dateien absolute Media-URLs brauchen. Ohne Variable bleiben relative Pfade (`/uploads/…`).
+
+Weitere Variablen:
+
+| Variable | Wirkung |
+|----------|---------|
+| `ALLOW_SERVER_FS=1` | Ordner-Scan und freie Job-Pfade auf dem Server-Dateisystem erlauben. **Online aus lassen.** `pnpm run studio` (lokal) schaltet es automatisch an. |
+| `MAX_UPLOAD_MB` | Maximale Upload-Größe pro Bild (Standard 40). |
+| `REMOTION_BROWSER_EXECUTABLE` | Eigenes Chrome/Chromium fürs Rendern statt Remotions Download. |
+
+Renders laufen nacheinander in einer Warteschlange; die UI zeigt den Platz an.
+
+### Docker
+
+```bash
+docker build -t room-flythrough .
+docker run -p 4300:4300 -v $PWD/data/uploads:/app/uploads -v $PWD/data/out:/app/out -v $PWD/data/jobs:/app/jobs room-flythrough
+```
 
 ## Funktionen
 

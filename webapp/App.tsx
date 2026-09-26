@@ -18,8 +18,9 @@ import {
   saveJobLocally,
   writeAutosave,
 } from "./jobStorage";
-import { apiUrl, mediaUrl } from "./clientApi";
+import { apiUrl, mediaUrl, uploadFile } from "./clientApi";
 import { useEditorHistory } from "./useEditorHistory";
+import { AutoBuilder, type AutoBuildResult } from "./AutoBuilder";
 
 type ScannedItem = {
   label: string;
@@ -31,6 +32,7 @@ type ScannedItem = {
 type RenderStatus = {
   status: "idle" | "rendering" | "done" | "error";
   progress: number;
+  queuePosition?: number;
   outputPath?: string;
   downloadUrl?: string;
   error?: string;
@@ -50,15 +52,6 @@ function moveItem<T>(list: T[], index: number, direction: -1 | 1): T[] {
   const next = [...list];
   [next[index], next[target]] = [next[target], next[index]];
   return next;
-}
-
-async function uploadFile(file: File): Promise<{ label: string; url: string }> {
-  const formData = new FormData();
-  formData.append("file", file);
-  const res = await fetch(apiUrl("/api/upload"), { method: "POST", body: formData });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "Upload fehlgeschlagen");
-  return data;
 }
 
 const FilePickerButton: React.FC<{
@@ -369,33 +362,68 @@ export const App: React.FC = () => {
     [durationInFrames, job.pictures.length, job.rooms.length],
   );
 
-  const startRender = useCallback(async () => {
-    try {
-      setRenderState({ status: "rendering", progress: 0 });
-      setRenderJobId(null);
+  const startRender = useCallback(
+    async (override?: AutoBuildResult) => {
+      const renderJob = override?.job ?? job;
+      const renderDuration = override?.durationInFrames ?? durationInFrames;
+      try {
+        if (pollRef.current) window.clearInterval(pollRef.current);
+        setRenderState({ status: "rendering", progress: 0 });
+        setRenderJobId(null);
 
-      const res = await fetch(apiUrl("/api/render"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...job, durationInFrames, outputName }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Render fehlgeschlagen");
-      const jobId = data.jobId as string;
-      setRenderJobId(jobId);
+        const res = await fetch(apiUrl("/api/render"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...renderJob, durationInFrames: renderDuration, outputName }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Render fehlgeschlagen");
+        const jobId = data.jobId as string;
+        setRenderJobId(jobId);
 
-      pollRef.current = window.setInterval(async () => {
-        const statusRes = await fetch(apiUrl(`/api/render/${jobId}`));
-        const statusData = (await statusRes.json()) as RenderStatus;
-        setRenderState(statusData);
-        if (statusData.status === "done" || statusData.status === "error") {
-          if (pollRef.current) window.clearInterval(pollRef.current);
-        }
-      }, 1000);
-    } catch (e) {
-      setRenderState({ status: "error", progress: 0, error: e instanceof Error ? e.message : String(e) });
-    }
-  }, [job, durationInFrames, outputName]);
+        pollRef.current = window.setInterval(async () => {
+          try {
+            const statusRes = await fetch(apiUrl(`/api/render/${jobId}`));
+            const statusData = await statusRes.json();
+            if (!statusRes.ok) throw new Error(statusData.error ?? "Render-Status unbekannt");
+            // "queued" is shown as rendering at 0 % plus the queue position.
+            setRenderState({ ...statusData, status: statusData.status === "queued" ? "rendering" : statusData.status });
+            if (statusData.status === "done" || statusData.status === "error") {
+              if (pollRef.current) window.clearInterval(pollRef.current);
+            }
+          } catch (e) {
+            if (pollRef.current) window.clearInterval(pollRef.current);
+            setRenderState({ status: "error", progress: 0, error: e instanceof Error ? e.message : String(e) });
+          }
+        }, 1000);
+      } catch (e) {
+        setRenderState({ status: "error", progress: 0, error: e instanceof Error ? e.message : String(e) });
+      }
+    },
+    [job, durationInFrames, outputName],
+  );
+
+  const applyAutoBuild = useCallback(
+    (result: AutoBuildResult, { render }: { render: boolean }) => {
+      setJob(result.job);
+      setDurationInFrames(result.durationInFrames);
+      setSelectedRoomIndex(0);
+      setSizeTarget({ kind: "room", index: 0 });
+      setActiveFrame(0);
+      playerRef.current?.seekTo(0);
+      playerRef.current?.play();
+      if (render) void startRender(result);
+    },
+    [setJob, setDurationInFrames, startRender],
+  );
+
+  const [serverFs, setServerFs] = useState(false);
+  useEffect(() => {
+    fetch(apiUrl("/api/config"))
+      .then((r) => r.json())
+      .then((c) => setServerFs(Boolean(c.serverFs)))
+      .catch(() => setServerFs(false));
+  }, []);
 
   const activeSizeItem =
     sizeTarget.kind === "picture"
@@ -438,11 +466,18 @@ export const App: React.FC = () => {
     <div className="app">
       <header className="app__header">
         <h1>Room Flythrough Studio</h1>
-        <p>Remotion + Three.js Web-App — lokal oder auf dem Server.</p>
+        <p>Räume und Wandbilder reinziehen — die Animation baut sich automatisch.</p>
       </header>
 
       <div className="app__body">
         <div className="panel">
+          <AutoBuilder
+            fps={FPS}
+            base={{ shadow: job.shadow, gloss: job.gloss, extrusionDepth: job.extrusionDepth }}
+            onBuild={applyAutoBuild}
+            renderBusy={renderState.status === "rendering"}
+          />
+
           <section className="card">
             <h2>1. Projekt</h2>
             <div className="project-bar">
@@ -513,6 +548,8 @@ export const App: React.FC = () => {
               )}
             </div>
 
+            {serverFs && (
+              <>
             <h3 className="card__sub">Optional: Server-Ordner scannen</h3>
             <div className="row">
               <input
@@ -550,6 +587,8 @@ export const App: React.FC = () => {
                   </li>
                 ))}
               </ul>
+            )}
+              </>
             )}
           </section>
 
@@ -1096,9 +1135,13 @@ export const App: React.FC = () => {
               Dateiname
               <input type="text" value={outputName} onChange={(e) => setOutputName(e.target.value)} />
             </label>
-            <p className="hint">Das Video landet in <code>out/</code> auf dem Server — danach Download.</p>
-            <button type="button" className="primary" onClick={startRender} disabled={renderState.status === "rendering"}>
-              {renderState.status === "rendering" ? `Rendert… ${renderState.progress}%` : "Video rendern"}
+            <p className="hint">Das Video wird auf dem Server gerendert — danach Download.</p>
+            <button type="button" className="primary" onClick={() => void startRender()} disabled={renderState.status === "rendering"}>
+              {renderState.status === "rendering"
+                ? renderState.queuePosition
+                  ? `In Warteschlange (Platz ${renderState.queuePosition})…`
+                  : `Rendert… ${renderState.progress}%`
+                : "Video rendern"}
             </button>
             {renderState.status === "rendering" && (
               <div className="progress">

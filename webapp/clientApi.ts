@@ -11,3 +11,14 @@ export function mediaUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   return apiUrl(url);
 }
+
+export type UploadedImage = { label: string; url: string };
+
+export async function uploadFile(file: File): Promise<UploadedImage> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(apiUrl("/api/upload"), { method: "POST", body: formData });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? "Upload fehlgeschlagen");
+  return data;
+}
