@@ -1038,7 +1038,7 @@ export const App: React.FC = () => {
                 label="FOV"
                 value={selectedKeyframe ? selectedKeyframe.fov : previewAxes.fov}
                 min={5}
-                max={52}
+                max={70}
                 step={0.5}
                 decimals={1}
                 onChange={(v) => applyCameraEdit({ fov: v })}

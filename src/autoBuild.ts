@@ -8,7 +8,8 @@
  */
 import type { RoomFlythroughProps } from "./RoomFlythrough";
 import { distributePictureHolds, pictureHoldStartFrame } from "./timing";
-import type { CameraKeyframe, PictureDef, RoomDef } from "./types";
+import { buildBallhausPath, type Rect } from "./cameraPath";
+import type { PictureDef, RoomDef } from "./types";
 
 /** Normalized (0..1, origin top-left) bounding box of the visible pixels. */
 export type AlphaBounds = { x0: number; y0: number; x1: number; y1: number };
@@ -40,19 +41,12 @@ export const DEFAULT_AUTO_OPTIONS: Omit<AutoBuildOptions, "fps"> = {
 };
 
 const PLANE_SIZE = 10;
-const CAMERA_DISTANCE = 8;
-const MIN_FOV = 15;
-const MAX_FOV = 52;
-/** Establishing shot when a new room starts: most of the room photo is visible. */
-const WIDE_FOV = 50;
-/** Pull back a little at the end of each room so the cut to the next one breathes. */
-const OUTRO_FOV = 42;
+/** Breathing room around the pictures (covers the drop shadow offset). */
+const REGION_PAD = 0.12;
 const MIN_ROOM_SECONDS = 2.5;
 const MIN_HOLD_FRAMES = 10;
 /** Longest side (world units) of a plain artwork without a shape mask. */
 const ARTWORK_SIZE = 1.8;
-/** Visible frame height relative to the picture size it frames. */
-const FRAMING = 2.8;
 /** A transparent PNG whose visible area fills most of its canvas is artwork, not a wall mask. */
 const MASK_MAX_BOUNDS_AREA = 0.5;
 
@@ -84,32 +78,19 @@ function chunkSizes(count: number, groups: number): number[] {
   return Array.from({ length: groups }, (_, i) => base + (i < extra ? 1 : 0));
 }
 
-type Target = { x: number; y: number; size: number };
-
-function pictureTarget(img: AnalyzedImage, picture: PictureDef): Target {
+/** World-space rectangle (y up) of a picture's visible pixels, incl. its drop shadow. */
+function pictureRect(img: AnalyzedImage, picture: PictureDef): Rect {
   const sx = picture.scaleX ?? 1;
   const sy = picture.scaleY ?? 1;
-  if (isWallMask(img) && img.bounds) {
-    const b = img.bounds;
-    const cx = (b.x0 + b.x1) / 2;
-    const cy = (b.y0 + b.y1) / 2;
-    return {
-      x: (cx - 0.5) * PLANE_SIZE * sx,
-      y: (0.5 - cy) * PLANE_SIZE * sy,
-      size: Math.max((b.x1 - b.x0) * PLANE_SIZE * sx, (b.y1 - b.y0) * PLANE_SIZE * sy),
-    };
-  }
-  return { x: 0, y: 0, size: PLANE_SIZE * Math.max(sx, sy) };
-}
-
-function fovForSize(size: number) {
-  const deg = (2 * Math.atan((size * FRAMING) / (2 * CAMERA_DISTANCE)) * 180) / Math.PI;
-  return clamp(deg, MIN_FOV, MAX_FOV);
-}
-
-/** Half the visible frame height at `fov` — pan must keep this inside the room photo. */
-function visibleHalf(fov: number) {
-  return CAMERA_DISTANCE * Math.tan(((fov / 2) * Math.PI) / 180);
+  const ox = picture.offsetX ?? 0;
+  const oy = picture.offsetY ?? 0;
+  const b = isWallMask(img) && img.bounds ? img.bounds : { x0: 0, y0: 0, x1: 1, y1: 1 };
+  return {
+    x0: (b.x0 - 0.5) * PLANE_SIZE * sx + ox,
+    x1: (b.x1 - 0.5) * PLANE_SIZE * sx + ox,
+    y0: (0.5 - b.y1) * PLANE_SIZE * sy + oy,
+    y1: (0.5 - b.y0) * PLANE_SIZE * sy + oy,
+  };
 }
 
 export function autoBuildJob(
@@ -209,51 +190,24 @@ export function autoBuildJob(
     };
   });
 
-  // --- Camera: establish each room wide, then push in on every picture -----
-  const keyframes: CameraKeyframe[] = [];
-  pictures.forEach((img, i) => {
-    const roomIndex = roomOfPicture[i];
-    const room = roomDefs[roomIndex] ?? roomDefs[0];
-    const firstInRoom = i === 0 || roomOfPicture[i - 1] !== roomIndex;
-    const lastInRoom = i === n - 1 || roomOfPicture[i + 1] !== roomIndex;
-    const target = pictureTarget(img, pictureDefs[i]);
-    const fov = fovForSize(target.size);
-    const side = i % 2 === 0 ? 1 : -1;
-    const drift = target.size * 0.06;
-
-    const start = holdStart(i);
-    // Hold ends where the morph starts; without morphs the next hold starts there instead.
-    const end = Math.min(start + holds[i] - (transition === 0 ? 1 : 0), durationInFrames - 1);
-    const pose = (t: 0 | 1): Omit<CameraKeyframe, "frame"> => {
-      let f = t === 0 ? fov * 1.05 : fov * 0.95;
-      if (t === 0 && firstInRoom) f = WIDE_FOV;
-      if (t === 1 && lastInRoom && !firstInRoom) f = Math.max(f, OUTRO_FOV);
-      f = clamp(f, MIN_FOV, MAX_FOV);
-      // Keep the whole frame inside the room photo (small margin for the orbit).
-      const limitX = Math.max(0, (PLANE_SIZE / 2) * (room.scaleX ?? 1) - visibleHalf(f) - 0.3);
-      const limitY = Math.max(0, (PLANE_SIZE / 2) * (room.scaleY ?? 1) - visibleHalf(f) - 0.3);
-      return {
-        position: [
-          round(clamp(target.x + (t === 0 ? drift : -drift) * side, -limitX, limitX)),
-          round(clamp(target.y + (t === 0 ? drift * 0.4 : -drift * 0.4), -limitY, limitY)),
-          CAMERA_DISTANCE,
-        ],
-        rotation: [round(t === 0 ? 3 * side : -1.5 * side, 2), round(t === 0 ? 0.5 : 0.2, 2)],
-        fov: round(f, 2),
-      };
-    };
-
-    keyframes.push({ frame: start, ...pose(0) });
-    if (end > start) keyframes.push({ frame: end, ...pose(1) });
+  // --- Camera: one continuous move, independent of morphs and room changes --
+  // The region every frame must show completely: all wall pictures together.
+  const rects = pictures.map((img, i) => pictureRect(img, pictureDefs[i]));
+  const region: Rect = {
+    x0: Math.min(...rects.map((r) => r.x0)) - REGION_PAD,
+    x1: Math.max(...rects.map((r) => r.x1)) + REGION_PAD,
+    y0: Math.min(...rects.map((r) => r.y0)) - REGION_PAD,
+    y1: Math.max(...rects.map((r) => r.y1)) + REGION_PAD,
+  };
+  // Every room must fill the frame, so use the smallest one.
+  const roomHalfX = (PLANE_SIZE / 2) * Math.min(...roomDefs.map((r) => r.scaleX ?? 1));
+  const roomHalfY = (PLANE_SIZE / 2) * Math.min(...roomDefs.map((r) => r.scaleY ?? 1));
+  const cameraKeyframes = buildBallhausPath(durationInFrames, region, {
+    x0: -roomHalfX,
+    x1: roomHalfX,
+    y0: -roomHalfY,
+    y1: roomHalfY,
   });
-  // Hold the final pose until the very last frame.
-  const last = keyframes[keyframes.length - 1];
-  if (last.frame < durationInFrames - 1) keyframes.push({ ...last, frame: durationInFrames - 1 });
-  // interpolate() needs strictly increasing frames.
-  const cameraKeyframes = keyframes.filter((k, i) => i === 0 || k.frame > keyframes[i - 1].frame);
-  if (cameraKeyframes.length < 2) {
-    cameraKeyframes.push({ ...cameraKeyframes[0], frame: cameraKeyframes[0].frame + 1 });
-  }
 
   return {
     durationInFrames,
