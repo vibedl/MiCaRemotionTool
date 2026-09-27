@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useRef } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { PerspectiveCamera as DreiPerspectiveCamera } from "@react-three/drei";
 import * as THREE from "three";
 import { staticFile } from "remotion";
@@ -71,6 +71,24 @@ function OrbitCamera({
   return <DreiPerspectiveCamera ref={ref} makeDefault />;
 }
 
+/**
+ * Mipmapped clone of a picture texture (same image, separate GPU upload). The
+ * main texture keeps mipmaps off to avoid colour bleed; for the morph only the
+ * smooth, blurred alpha of the coarse mip levels is needed.
+ */
+function useMorphTexture(texture: THREE.Texture) {
+  const clone = useMemo(() => {
+    const t = texture.clone();
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+    return t;
+  }, [texture]);
+  useEffect(() => () => clone.dispose(), [clone]);
+  return clone;
+}
+
 /** Blend scales across a crossfade so size transitions stay smooth. */
 function blendedScale(
   from: { scaleX?: number; scaleY?: number },
@@ -126,6 +144,10 @@ export const RoomScene: React.FC<Props> = ({
     reflectionTexture.needsUpdate = true;
   }
 
+  const morphFrom = useMorphTexture(pictureTextureFrom);
+  const morphTo = useMorphTexture(pictureTextureTo);
+  const morph = { morphA: morphFrom, morphB: morphTo };
+
   const depth = Math.max(0, extrusionDepth);
   const extruding = depth > 0.001;
 
@@ -137,6 +159,7 @@ export const RoomScene: React.FC<Props> = ({
   });
   const pictureMaterial = useCrossfadeMaterial(pictureTextureFrom, pictureTextureTo, pictureState.mix, {
     alphaCutout: true,
+    ...morph,
     side: THREE.FrontSide,
     depthWrite: extruding,
     depthTest: extruding,
@@ -144,6 +167,7 @@ export const RoomScene: React.FC<Props> = ({
   /** Darkened shells so the extruded rim reads as a material edge at oblique angles. */
   const shellMaterial = useCrossfadeMaterial(pictureTextureFrom, pictureTextureTo, pictureState.mix, {
     alphaCutout: true,
+    ...morph,
     tint: 0.68,
     side: THREE.FrontSide,
     depthWrite: true,
@@ -153,6 +177,7 @@ export const RoomScene: React.FC<Props> = ({
     opacity: shadow.opacity,
     shadowMode: 1,
     alphaCutout: true,
+    ...morph,
     side: THREE.FrontSide,
     depthWrite: false,
     depthTest: false,
@@ -160,6 +185,7 @@ export const RoomScene: React.FC<Props> = ({
   const glossMaterial = useCrossfadeMaterial(pictureTextureFrom, pictureTextureTo, pictureState.mix, {
     glossOverlay: true,
     alphaCutout: true,
+    ...morph,
     glossStrength: gloss.strength,
     glossSharpness: gloss.sharpness,
     reflectStrength: gloss.reflectStrength ?? 0,

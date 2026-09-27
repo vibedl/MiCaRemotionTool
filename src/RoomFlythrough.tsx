@@ -8,7 +8,7 @@ import type { CameraKeyframe, PictureDef, RoomDef, ShadowConfig, GlossConfig } f
 /** Very subtle contact shadow: the picture sits almost flush on the wall. */
 export const DEFAULT_SHADOW: ShadowConfig = { offsetX: 0.012, offsetY: -0.016, opacity: 0.22 };
 /** Acrylic look: light lacquer highlight + studio reflection sliding across with the camera. */
-export const DEFAULT_GLOSS: GlossConfig = { strength: 0.22, sharpness: 0.6, reflectStrength: 1 };
+export const DEFAULT_GLOSS: GlossConfig = { strength: 0.1, sharpness: 0.6, reflectStrength: 0.3 };
 /** Slight material thickness so the edges read at oblique camera angles. */
 export const DEFAULT_EXTRUSION_DEPTH = 0.06;
 

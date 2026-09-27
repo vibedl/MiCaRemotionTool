@@ -45,6 +45,8 @@ export const DEFAULT_AUTO_OPTIONS: Omit<AutoBuildOptions, "fps"> = {
 const PLANE_SIZE = 10;
 /** Share of the free wall kept clear on each side when placing pictures. */
 const PLACE_MARGIN = 0.04;
+/** Below this scale the shared free wall is too small; use the best single room instead. */
+const MIN_SHARED_FIT = 0.55;
 /** Breathing room around the pictures (covers the drop shadow offset). */
 const REGION_PAD = 0.12;
 const MIN_ROOM_SECONDS = 2.5;
@@ -95,6 +97,73 @@ function pictureRect(img: AnalyzedImage, picture: PictureDef): Rect {
     y0: (0.5 - b.y1) * PLANE_SIZE * sy + oy,
     y1: (0.5 - b.y0) * PLANE_SIZE * sy + oy,
   };
+}
+
+function freeWallRect(img: AnalyzedImage, room: RoomDef): Rect | null {
+  if (!img.freeWall) return null;
+  const fw = img.freeWall;
+  const sx = room.scaleX ?? 1;
+  const sy = room.scaleY ?? 1;
+  const mx = (fw.x1 - fw.x0) * PLACE_MARGIN * PLANE_SIZE * sx;
+  const my = (fw.y1 - fw.y0) * PLACE_MARGIN * PLANE_SIZE * sy;
+  return {
+    x0: (fw.x0 - 0.5) * PLANE_SIZE * sx + mx,
+    x1: (fw.x1 - 0.5) * PLANE_SIZE * sx - mx,
+    y0: (0.5 - fw.y1) * PLANE_SIZE * sy + my,
+    y1: (0.5 - fw.y0) * PLANE_SIZE * sy - my,
+  };
+}
+
+/**
+ * Scales (only down) and shifts the union of all pictures into the free wall
+ * shared by every room. The same transform is applied to every picture, so
+ * their relative layout is kept and nothing jumps during the video. If the
+ * rooms share too little free wall, the placement falls back to the largest
+ * single-room free wall.
+ */
+function placeOnFreeWall(
+  pictures: AnalyzedImage[],
+  defs: PictureDef[],
+  rooms: AnalyzedImage[],
+  roomDefs: RoomDef[],
+): PictureDef[] {
+  const walls = rooms.map((img, i) => freeWallRect(img, roomDefs[i])).filter((r): r is Rect => r !== null);
+  if (walls.length === 0) return defs;
+  const shared: Rect = {
+    x0: Math.max(...walls.map((w) => w.x0)),
+    x1: Math.min(...walls.map((w) => w.x1)),
+    y0: Math.max(...walls.map((w) => w.y0)),
+    y1: Math.min(...walls.map((w) => w.y1)),
+  };
+  const rects = pictures.map((img, i) => pictureRect(img, defs[i]));
+  const union: Rect = {
+    x0: Math.min(...rects.map((r) => r.x0)),
+    x1: Math.max(...rects.map((r) => r.x1)),
+    y0: Math.min(...rects.map((r) => r.y0)),
+    y1: Math.max(...rects.map((r) => r.y1)),
+  };
+  const fitScale = (t: Rect) =>
+    t.x1 <= t.x0 || t.y1 <= t.y0
+      ? 0
+      : Math.min(1, (t.x1 - t.x0) / (union.x1 - union.x0), (t.y1 - t.y0) / (union.y1 - union.y0));
+  let target = shared;
+  if (fitScale(shared) < MIN_SHARED_FIT) {
+    target = walls.reduce((a, b) => (fitScale(b) > fitScale(a) ? b : a));
+  }
+  const k = fitScale(target);
+  if (k <= 0) return defs;
+  const scaled: Rect = { x0: union.x0 * k, x1: union.x1 * k, y0: union.y0 * k, y1: union.y1 * k };
+  const shift = (lo: number, hi: number, tLo: number, tHi: number) =>
+    lo < tLo ? tLo - lo : hi > tHi ? tHi - hi : 0;
+  const dx = shift(scaled.x0, scaled.x1, target.x0, target.x1);
+  const dy = shift(scaled.y0, scaled.y1, target.y0, target.y1);
+  return defs.map((def) => ({
+    ...def,
+    scaleX: round((def.scaleX ?? 1) * k, 4),
+    scaleY: round((def.scaleY ?? 1) * k, 4),
+    offsetX: round((def.offsetX ?? 0) * k + dx),
+    offsetY: round((def.offsetY ?? 0) * k + dy),
+  }));
 }
 
 export function autoBuildJob(
@@ -195,37 +264,9 @@ export function autoBuildJob(
   });
 
   // --- Keep pictures on the free wall: never overlapping furniture ----------
-  const pictureDefs = placedDefs.map((def, i) => {
-    const roomImg = rooms[roomOfPicture[i]];
-    const room = roomDefs[roomOfPicture[i]] ?? roomDefs[0];
-    if (!roomImg?.freeWall) return def;
-    const fw = roomImg.freeWall;
-    const sx = room.scaleX ?? 1;
-    const sy = room.scaleY ?? 1;
-    // Free wall in world units, shrunk by a margin for the edge, shadow and breathing room.
-    const mx = (fw.x1 - fw.x0) * PLACE_MARGIN * PLANE_SIZE * sx;
-    const my = (fw.y1 - fw.y0) * PLACE_MARGIN * PLANE_SIZE * sy;
-    const target: Rect = {
-      x0: (fw.x0 - 0.5) * PLANE_SIZE * sx + mx,
-      x1: (fw.x1 - 0.5) * PLANE_SIZE * sx - mx,
-      y0: (0.5 - fw.y1) * PLANE_SIZE * sy + my,
-      y1: (0.5 - fw.y0) * PLANE_SIZE * sy - my,
-    };
-    const r = pictureRect(pictures[i], def);
-    // Shrink only if needed (scaling happens around the plane center) …
-    const k = Math.min(1, (target.x1 - target.x0) / (r.x1 - r.x0), (target.y1 - target.y0) / (r.y1 - r.y0));
-    const scaled: Rect = { x0: r.x0 * k, x1: r.x1 * k, y0: r.y0 * k, y1: r.y1 * k };
-    // … then move the least distance that puts it inside the free wall.
-    const shift = (lo: number, hi: number, tLo: number, tHi: number) =>
-      lo < tLo ? tLo - lo : hi > tHi ? tHi - hi : 0;
-    return {
-      ...def,
-      scaleX: round((def.scaleX ?? 1) * k, 4),
-      scaleY: round((def.scaleY ?? 1) * k, 4),
-      offsetX: round(shift(scaled.x0, scaled.x1, target.x0, target.x1)),
-      offsetY: round(shift(scaled.y0, scaled.y1, target.y0, target.y1)),
-    };
-  });
+  // One shared placement for ALL pictures (fitted into the wall area that is
+  // free in every room), so pictures never jump between morphs or rooms.
+  const pictureDefs = placeOnFreeWall(pictures, placedDefs, rooms, roomDefs);
 
   // --- Camera: one continuous move, independent of morphs and room changes --
   // The region every frame must show completely: all wall pictures together.

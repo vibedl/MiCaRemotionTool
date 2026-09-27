@@ -147,7 +147,7 @@ export function buildJobFile({ sourceFolder, name, durationInFrames, outputName,
       crossfadeFrames: job.crossfadeFrames ?? 30,
       cameraKeyframes: job.cameraKeyframes ?? [],
       shadow: job.shadow ?? { offsetX: 0.012, offsetY: -0.016, opacity: 0.22 },
-      gloss: job.gloss ?? { strength: 0.22, sharpness: 0.6, reflectStrength: 1 },
+      gloss: job.gloss ?? { strength: 0.1, sharpness: 0.6, reflectStrength: 0.3 },
       extrusionDepth: job.extrusionDepth ?? 0.06,
     },
   };
@@ -174,7 +174,7 @@ export function resolveJobFile(file, serverUrl) {
       crossfadeFrames: j.crossfadeFrames ?? 30,
       cameraKeyframes: j.cameraKeyframes ?? [],
       shadow: j.shadow ?? { offsetX: 0.012, offsetY: -0.016, opacity: 0.22 },
-      gloss: j.gloss ?? { strength: 0.22, sharpness: 0.6, reflectStrength: 1 },
+      gloss: j.gloss ?? { strength: 0.1, sharpness: 0.6, reflectStrength: 0.3 },
       extrusionDepth: j.extrusionDepth ?? 0.06,
     },
   };

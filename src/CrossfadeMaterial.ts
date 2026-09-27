@@ -27,6 +27,13 @@ uniform float uMix;
 uniform float uEnvMix;
 uniform float uOpacity;
 uniform float uTint;
+// Shape morph: mipmapped copies of the picture textures give a cheap blurred
+// alpha field; interpolating that field and re-thresholding it moves the
+// silhouette smoothly from one shape to the next instead of cross-dissolving.
+uniform sampler2D morphA;
+uniform sampler2D morphB;
+uniform float uMorphOn;
+uniform float uMorphBlur;
 uniform float uFadeStrength;
 uniform float uShadowMode;
 uniform float uUvScale;
@@ -69,6 +76,34 @@ void main() {
   // exporters leave there) must not bleed into the morph as streaks.
   vec4 pm = mix(vec4(colorA.rgb * colorA.a, colorA.a), vec4(colorB.rgb * colorB.a, colorB.a), uMix);
   vec4 blended = vec4(pm.rgb / max(pm.a, 0.0001), pm.a);
+
+  if (uMorphOn > 0.5 && uMix > 0.0005 && uMix < 0.9995) {
+    // Several coarse-mip taps give a smooth field (a single tap shows the mip grid as wobbles).
+    float fa = 0.0;
+    float fb = 0.0;
+    vec3 ca = vec3(0.0);
+    vec3 cb = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+      float ang = float(i) * 0.785398 + 0.39;
+      vec2 o = vec2(cos(ang), sin(ang)) * 0.006;
+      vec4 ta = texture2D(morphA, uv + o, uMorphBlur);
+      vec4 tb = texture2D(morphB, uv + o, uMorphBlur);
+      fa += ta.a;
+      fb += tb.a;
+      ca += ta.rgb;
+      cb += tb.rgb;
+    }
+    fa /= 8.0;
+    fb /= 8.0;
+    float mask = smoothstep(0.42, 0.58, mix(fa, fb, uMix));
+    // Blend from the exact source shape into the morph and from the morph into the
+    // exact target shape — never towards the other shape, so no ghost silhouettes.
+    float w = smoothstep(0.0, 0.22, uMix) * smoothstep(1.0, 0.78, uMix);
+    float exact = uMix < 0.5 ? colorA.a : colorB.a;
+    // Inside the morphing silhouette but outside both shapes: use the blurred colour.
+    vec3 rgb = pm.a > 0.03 ? blended.rgb : mix(ca, cb, uMix) / 8.0;
+    blended = vec4(rgb, mix(exact, mask, w));
+  }
   float shapeAlpha = blended.a;
 
   // Alpha is a mask only — never draw black RGB from transparent texels
@@ -102,7 +137,7 @@ void main() {
     // Soft blur-ish: also sample a slightly offset UV for smoother lacquer
     vec2 envUv2 = dirToEquirect(normalize(r + vec3(0.04, 0.02, -0.03)));
     envColor = mix(envColor, mix(texture2D(envMapA, envUv2).rgb, texture2D(envMapB, envUv2).rgb, uEnvMix), 0.35);
-    float reflectFresnel = mix(0.45, 1.0, fresnel);
+    float reflectFresnel = mix(0.28, 1.0, fresnel);
     vec3 reflection = envColor * reflectFresnel * uReflectStrength;
 
     vec3 outRgb = (vec3(glow) + reflection) * shapeAlpha;
@@ -140,6 +175,9 @@ export type CrossfadeMaterialOptions = {
   /** Room textures used as environment for gloss reflection */
   envMapA?: THREE.Texture | null;
   envMapB?: THREE.Texture | null;
+  /** Mipmapped copies of textureA/B — enables the silhouette morph. */
+  morphA?: THREE.Texture | null;
+  morphB?: THREE.Texture | null;
   envMix?: number;
   /** Additive gloss pass — highlight only, masked by picture alpha */
   glossOverlay?: boolean;
@@ -194,6 +232,10 @@ export function useCrossfadeMaterial(
         uniforms: {
           textureA: { value: textureA },
           textureB: { value: textureB },
+          morphA: { value: FALLBACK_ENV },
+          morphB: { value: FALLBACK_ENV },
+          uMorphOn: { value: 0 },
+          uMorphBlur: { value: 4.5 },
           envMapA: { value: FALLBACK_ENV },
           envMapB: { value: FALLBACK_ENV },
           uMix: { value: mix },
@@ -234,6 +276,9 @@ export function useCrossfadeMaterial(
 
   material.uniforms.textureA.value = textureA;
   material.uniforms.textureB.value = textureB;
+  material.uniforms.morphA.value = options.morphA ?? FALLBACK_ENV;
+  material.uniforms.morphB.value = options.morphB ?? FALLBACK_ENV;
+  material.uniforms.uMorphOn.value = options.morphA && options.morphB ? 1 : 0;
   material.uniforms.envMapA.value = options.envMapA ?? FALLBACK_ENV;
   material.uniforms.envMapB.value = options.envMapB ?? FALLBACK_ENV;
   material.uniforms.uMix.value = mix;
