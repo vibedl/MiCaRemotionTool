@@ -263,8 +263,12 @@ let rendering = false;
 /** @type {Promise<string> | null} */
 let bundlePromise = null;
 
+/** Local dev (`--local`) rebundles per render so source edits show up without a restart. */
+const CACHE_BUNDLE = !process.argv.includes("--local");
+
 function getBundle() {
   // Bundling takes several seconds; reuse it for every render of this server process.
+  if (!CACHE_BUNDLE) return bundle({ entryPoint: ENTRY_POINT });
   if (!bundlePromise) {
     bundlePromise = bundle({ entryPoint: ENTRY_POINT }).catch((err) => {
       bundlePromise = null;
