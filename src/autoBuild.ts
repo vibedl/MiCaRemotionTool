@@ -36,7 +36,7 @@ export type AutoBuildOptions = {
 };
 
 export const DEFAULT_AUTO_OPTIONS: Omit<AutoBuildOptions, "fps"> = {
-  secondsPerPicture: 1.6,
+  secondsPerPicture: 1.1,
   morphSeconds: 0.45,
   roomCrossfadeSeconds: 1,
   maxFrames: 1800,
