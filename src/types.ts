@@ -59,8 +59,14 @@ export type ShadowConfig = {
 export type GlossConfig = {
   strength: number;
   sharpness: number;
-  /** Environment reflection amount (0 = none). Uses the current room photo as env. */
+  /** Acrylic-glass reflection amount (0 = none). */
   reflectStrength?: number;
+  /**
+   * Equirectangular studio environment reflected by the picture surface
+   * (softbox highlights that slide across as the camera moves). Defaults to
+   * the bundled `assets/Reflection_1.webp`.
+   */
+  reflectionMap?: string;
 };
 
 export const DEFAULT_SCALE = { scaleX: 1, scaleY: 1, aspectLock: true as const };

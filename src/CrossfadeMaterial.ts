@@ -26,6 +26,7 @@ uniform sampler2D envMapB;
 uniform float uMix;
 uniform float uEnvMix;
 uniform float uOpacity;
+uniform float uTint;
 uniform float uFadeStrength;
 uniform float uShadowMode;
 uniform float uUvScale;
@@ -64,7 +65,10 @@ void main() {
   vec2 uv = vUv * uUvScale + uUvOffset;
   vec4 colorA = texture2D(textureA, uv);
   vec4 colorB = texture2D(textureB, uv);
-  vec4 blended = mix(colorA, colorB, uMix);
+  // Premultiplied crossfade: RGB hidden under zero alpha (edge smear some PNG
+  // exporters leave there) must not bleed into the morph as streaks.
+  vec4 pm = mix(vec4(colorA.rgb * colorA.a, colorA.a), vec4(colorB.rgb * colorB.a, colorB.a), uMix);
+  vec4 blended = vec4(pm.rgb / max(pm.a, 0.0001), pm.a);
   float shapeAlpha = blended.a;
 
   // Alpha is a mask only — never draw black RGB from transparent texels
@@ -89,7 +93,8 @@ void main() {
     float glow = (spec * 0.7 + fresnel * 0.45 + streak * 0.4) * uGlossStrength;
 
     // Stage-B env reflection: sample the room photo as a spherical env map
-    vec3 r = reflect(-v, n);
+    // Tilt the lookup upward so the studio's ceiling softboxes land on the picture.
+    vec3 r = normalize(reflect(-v, n) + vec3(0.0, 0.55, 0.0));
     vec2 envUv = dirToEquirect(r);
     vec3 envA = texture2D(envMapA, envUv).rgb;
     vec3 envB = texture2D(envMapB, envUv).rgb;
@@ -97,7 +102,7 @@ void main() {
     // Soft blur-ish: also sample a slightly offset UV for smoother lacquer
     vec2 envUv2 = dirToEquirect(normalize(r + vec3(0.04, 0.02, -0.03)));
     envColor = mix(envColor, mix(texture2D(envMapA, envUv2).rgb, texture2D(envMapB, envUv2).rgb, uEnvMix), 0.35);
-    float reflectFresnel = mix(0.12, 1.0, fresnel);
+    float reflectFresnel = mix(0.45, 1.0, fresnel);
     vec3 reflection = envColor * reflectFresnel * uReflectStrength;
 
     vec3 outRgb = (vec3(glow) + reflection) * shapeAlpha;
@@ -115,7 +120,8 @@ void main() {
     return;
   }
 
-  vec3 rgb = dither(blended.rgb);
+  // uTint < 1 darkens (used for the extruded side walls so the edge reads).
+  vec3 rgb = dither(blended.rgb * uTint);
   // Premultiplied so black RGB in fringe texels cannot darken the room
   gl_FragColor = vec4(rgb * alpha, alpha);
 }
@@ -123,6 +129,8 @@ void main() {
 
 export type CrossfadeMaterialOptions = {
   opacity?: number;
+  /** RGB multiplier (1 = unchanged). */
+  tint?: number;
   fade?: number;
   shadowMode?: number;
   uvBleed?: number;
@@ -191,6 +199,7 @@ export function useCrossfadeMaterial(
           uMix: { value: mix },
           uEnvMix: { value: 0 },
           uOpacity: { value: options.opacity ?? 1 },
+          uTint: { value: options.tint ?? 1 },
           uFadeStrength: { value: options.fade ?? 0 },
           uShadowMode: { value: options.shadowMode ?? 0 },
           uUvScale: { value: options.uvBleed ?? 1 },
@@ -230,6 +239,7 @@ export function useCrossfadeMaterial(
   material.uniforms.uMix.value = mix;
   material.uniforms.uEnvMix.value = options.envMix ?? 0;
   material.uniforms.uOpacity.value = options.opacity ?? 1;
+  material.uniforms.uTint.value = options.tint ?? 1;
   material.uniforms.uFadeStrength.value = options.fade ?? 0;
   material.uniforms.uShadowMode.value = options.shadowMode ?? 0;
   material.uniforms.uUvScale.value = options.uvBleed ?? 1;

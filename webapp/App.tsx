@@ -61,6 +61,11 @@ function withPortableAssets(job: RoomFlythroughProps): RoomFlythroughProps {
     ...job,
     pictures: job.pictures.map((p) => ({ ...p, src: portableAssetSrc(p.src) })),
     rooms: job.rooms.map((r) => ({ ...r, src: portableAssetSrc(r.src) })),
+    // Explicit, page-relative reflection map (the scene's staticFile default breaks on a sub-path).
+    gloss: {
+      ...job.gloss,
+      reflectionMap: portableAssetSrc(job.gloss?.reflectionMap ?? "/assets/Reflection_1.webp"),
+    },
   };
 }
 
@@ -1049,8 +1054,8 @@ export const App: React.FC = () => {
           <section className="card">
             <h2>5. Schlagschatten, Glanz &amp; Extrusion</h2>
             <p className="hint">
-              Extrusion gilt für alle Wandbilder gleichzeitig. Spiegelung nutzt den aktuellen Raum als
-              Environment (Fresnel) — am besten mit etwas Kamerawinkel sichtbar.
+              Extrusion gilt für alle Wandbilder gleichzeitig. Spiegelung: Studio-Softboxen wandern mit
+              der Kamera über das Acryl — am besten mit etwas Kamerawinkel sichtbar.
             </p>
             <label className="field">
               Extrusion / Tiefe (global)
@@ -1106,6 +1111,7 @@ export const App: React.FC = () => {
                   setJob((p) => ({
                     ...p,
                     gloss: {
+                      ...p.gloss,
                       strength: v,
                       sharpness: p.gloss?.sharpness ?? 0.5,
                       reflectStrength: p.gloss?.reflectStrength ?? 0.2,
@@ -1125,6 +1131,7 @@ export const App: React.FC = () => {
                   setJob((p) => ({
                     ...p,
                     gloss: {
+                      ...p.gloss,
                       strength: p.gloss?.strength ?? 0.35,
                       sharpness: v,
                       reflectStrength: p.gloss?.reflectStrength ?? 0.2,
@@ -1134,16 +1141,17 @@ export const App: React.FC = () => {
               />
             </label>
             <label className="field">
-              Spiegelung (Raum-Env)
+              Spiegelung (Acryl)
               <SliderField
-                value={job.gloss?.reflectStrength ?? 0.2}
+                value={job.gloss?.reflectStrength ?? 0.8}
                 min={0}
-                max={0.6}
+                max={1.5}
                 step={0.01}
                 onChange={(v) =>
                   setJob((p) => ({
                     ...p,
                     gloss: {
+                      ...p.gloss,
                       strength: p.gloss?.strength ?? 0.35,
                       sharpness: p.gloss?.sharpness ?? 0.5,
                       reflectStrength: v,

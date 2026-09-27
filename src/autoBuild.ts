@@ -22,6 +22,8 @@ export type AnalyzedImage = {
   hasTransparency: boolean;
   /** Only set for images with transparency. */
   bounds?: AlphaBounds;
+  /** Rooms only: free wall area (no furniture), normalized like `bounds`. */
+  freeWall?: AlphaBounds;
 };
 
 export type AutoBuildOptions = {
@@ -41,6 +43,8 @@ export const DEFAULT_AUTO_OPTIONS: Omit<AutoBuildOptions, "fps"> = {
 };
 
 const PLANE_SIZE = 10;
+/** Share of the free wall kept clear on each side when placing pictures. */
+const PLACE_MARGIN = 0.04;
 /** Breathing room around the pictures (covers the drop shadow offset). */
 const REGION_PAD = 0.12;
 const MIN_ROOM_SECONDS = 2.5;
@@ -164,7 +168,7 @@ export function autoBuildJob(
   }));
 
   // --- Pictures: masks align with their room, artwork becomes a wall print --
-  const pictureDefs: PictureDef[] = pictures.map((img, i) => {
+  const placedDefs: PictureDef[] = pictures.map((img, i) => {
     const room = roomDefs[roomOfPicture[i]] ?? roomDefs[0];
     let scale: { scaleX: number; scaleY: number };
     if (isWallMask(img)) {
@@ -187,6 +191,39 @@ export function autoBuildJob(
       aspectLock: true,
       offsetX: 0,
       offsetY: 0,
+    };
+  });
+
+  // --- Keep pictures on the free wall: never overlapping furniture ----------
+  const pictureDefs = placedDefs.map((def, i) => {
+    const roomImg = rooms[roomOfPicture[i]];
+    const room = roomDefs[roomOfPicture[i]] ?? roomDefs[0];
+    if (!roomImg?.freeWall) return def;
+    const fw = roomImg.freeWall;
+    const sx = room.scaleX ?? 1;
+    const sy = room.scaleY ?? 1;
+    // Free wall in world units, shrunk by a margin for the edge, shadow and breathing room.
+    const mx = (fw.x1 - fw.x0) * PLACE_MARGIN * PLANE_SIZE * sx;
+    const my = (fw.y1 - fw.y0) * PLACE_MARGIN * PLANE_SIZE * sy;
+    const target: Rect = {
+      x0: (fw.x0 - 0.5) * PLANE_SIZE * sx + mx,
+      x1: (fw.x1 - 0.5) * PLANE_SIZE * sx - mx,
+      y0: (0.5 - fw.y1) * PLANE_SIZE * sy + my,
+      y1: (0.5 - fw.y0) * PLANE_SIZE * sy - my,
+    };
+    const r = pictureRect(pictures[i], def);
+    // Shrink only if needed (scaling happens around the plane center) …
+    const k = Math.min(1, (target.x1 - target.x0) / (r.x1 - r.x0), (target.y1 - target.y0) / (r.y1 - r.y0));
+    const scaled: Rect = { x0: r.x0 * k, x1: r.x1 * k, y0: r.y0 * k, y1: r.y1 * k };
+    // … then move the least distance that puts it inside the free wall.
+    const shift = (lo: number, hi: number, tLo: number, tHi: number) =>
+      lo < tLo ? tLo - lo : hi > tHi ? tHi - hi : 0;
+    return {
+      ...def,
+      scaleX: round((def.scaleX ?? 1) * k, 4),
+      scaleY: round((def.scaleY ?? 1) * k, 4),
+      offsetX: round(shift(scaled.x0, scaled.x1, target.x0, target.x1)),
+      offsetY: round(shift(scaled.y0, scaled.y1, target.y0, target.y1)),
     };
   });
 

@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useMemo, useRef } from "react";
 import { PerspectiveCamera as DreiPerspectiveCamera } from "@react-three/drei";
 import * as THREE from "three";
+import { staticFile } from "remotion";
 import { useImageTexture } from "./useImageTexture";
 import { useCrossfadeMaterial } from "./CrossfadeMaterial";
 import type { CrossfadeSegment } from "./timing";
@@ -15,7 +16,7 @@ const ROOM_PLANE_SIZE = PLANE_SIZE * ROOM_BLEED;
 const Z_SHADOW = 0.02;
 const Z_PICTURE = 0.04;
 /** Shell count for global extrusion (cardboard relief). */
-const SHELL_COUNT = 8;
+const SHELL_COUNT = 12;
 
 type CameraState = {
   position: [number, number, number];
@@ -118,6 +119,13 @@ export const RoomScene: React.FC<Props> = ({
     forAlphaCutout: true,
   });
 
+  const reflectionTexture = useImageTexture(gloss.reflectionMap ?? staticFile("assets/Reflection_1.webp"));
+  if (reflectionTexture.wrapS !== THREE.RepeatWrapping) {
+    // Equirectangular map: wrap horizontally so the seam never shows.
+    reflectionTexture.wrapS = THREE.RepeatWrapping;
+    reflectionTexture.needsUpdate = true;
+  }
+
   const depth = Math.max(0, extrusionDepth);
   const extruding = depth > 0.001;
 
@@ -133,10 +141,10 @@ export const RoomScene: React.FC<Props> = ({
     depthWrite: extruding,
     depthTest: extruding,
   });
-  /** Slightly darkened shells so the extruded rim reads at grazing angles. */
+  /** Darkened shells so the extruded rim reads as a material edge at oblique angles. */
   const shellMaterial = useCrossfadeMaterial(pictureTextureFrom, pictureTextureTo, pictureState.mix, {
     alphaCutout: true,
-    opacity: 0.88,
+    tint: 0.68,
     side: THREE.FrontSide,
     depthWrite: true,
     depthTest: true,
@@ -155,9 +163,9 @@ export const RoomScene: React.FC<Props> = ({
     glossStrength: gloss.strength,
     glossSharpness: gloss.sharpness,
     reflectStrength: gloss.reflectStrength ?? 0,
-    envMapA: roomTextureFrom,
-    envMapB: roomTextureTo,
-    envMix: roomState.mix,
+    envMapA: reflectionTexture,
+    envMapB: reflectionTexture,
+    envMix: 0,
     side: THREE.FrontSide,
     depthWrite: false,
     depthTest: false,

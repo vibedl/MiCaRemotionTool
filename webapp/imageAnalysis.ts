@@ -1,11 +1,25 @@
 import type { AlphaBounds } from "../src/autoBuild";
+import { detectFreeWall } from "../src/wallDetect";
 
 export type ImageInfo = {
   width: number;
   height: number;
   hasTransparency: boolean;
   bounds?: AlphaBounds;
+  freeWall?: AlphaBounds;
 };
+
+const WALL_SCAN_SIZE = 128;
+
+function freeWallOf(img: HTMLImageElement): AlphaBounds | null {
+  const canvas = document.createElement("canvas");
+  canvas.width = WALL_SCAN_SIZE;
+  canvas.height = WALL_SCAN_SIZE;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(img, 0, 0, WALL_SCAN_SIZE, WALL_SCAN_SIZE);
+  return detectFreeWall(ctx.getImageData(0, 0, WALL_SCAN_SIZE, WALL_SCAN_SIZE).data, WALL_SCAN_SIZE, WALL_SCAN_SIZE);
+}
 
 /** Longest side of the downscaled copy used for the alpha scan. */
 const SCAN_SIZE = 256;
@@ -32,9 +46,7 @@ export async function analyzeImageFile(file: File): Promise<ImageInfo> {
     const img = await loadImage(url);
     const width = img.naturalWidth;
     const height = img.naturalHeight;
-    if (/jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name)) {
-      return { width, height, hasTransparency: false };
-    }
+    const opaque = /jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name);
 
     const k = Math.min(1, SCAN_SIZE / Math.max(width, height));
     const w = Math.max(1, Math.round(width * k));
@@ -65,8 +77,12 @@ export async function analyzeImageFile(file: File): Promise<ImageInfo> {
       }
     }
 
-    const hasTransparency = transparent / (w * h) > TRANSPARENT_SHARE;
-    if (!hasTransparency || x1 < 0) return { width, height, hasTransparency };
+    const hasTransparency = !opaque && transparent / (w * h) > TRANSPARENT_SHARE;
+    if (!hasTransparency) {
+      // Opaque photo = room: find where pictures may hang (no furniture).
+      return { width, height, hasTransparency, freeWall: freeWallOf(img) ?? undefined };
+    }
+    if (x1 < 0) return { width, height, hasTransparency };
     return {
       width,
       height,

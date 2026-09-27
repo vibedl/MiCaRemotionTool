@@ -5,10 +5,12 @@ import { RoomScene } from "./RoomScene";
 import { distributePictureHolds, pictureStateAtFrame, roomStateAtFrame } from "./timing";
 import type { CameraKeyframe, PictureDef, RoomDef, ShadowConfig, GlossConfig } from "./types";
 
-export const DEFAULT_SHADOW: ShadowConfig = { offsetX: 0.045, offsetY: -0.045, opacity: 0.45 };
-export const DEFAULT_GLOSS: GlossConfig = { strength: 0.35, sharpness: 0.5, reflectStrength: 0.2 };
-/** Flat by default; raise for a global cardboard/relief thickness on all shapes. */
-export const DEFAULT_EXTRUSION_DEPTH = 0;
+/** Very subtle contact shadow: the picture sits almost flush on the wall. */
+export const DEFAULT_SHADOW: ShadowConfig = { offsetX: 0.012, offsetY: -0.016, opacity: 0.22 };
+/** Acrylic look: light lacquer highlight + studio reflection sliding across with the camera. */
+export const DEFAULT_GLOSS: GlossConfig = { strength: 0.22, sharpness: 0.6, reflectStrength: 1 };
+/** Slight material thickness so the edges read at oblique camera angles. */
+export const DEFAULT_EXTRUSION_DEPTH = 0.06;
 
 export type RoomFlythroughProps = {
   pictures: PictureDef[];

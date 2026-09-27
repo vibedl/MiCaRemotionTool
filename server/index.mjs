@@ -290,6 +290,9 @@ function absolutizeJobMedia(jobProps) {
     ...jobProps,
     pictures: (jobProps.pictures ?? []).map((p) => ({ ...p, src: absolutizeSrc(p.src) })),
     rooms: (jobProps.rooms ?? []).map((r) => ({ ...r, src: absolutizeSrc(r.src) })),
+    ...(jobProps.gloss?.reflectionMap
+      ? { gloss: { ...jobProps.gloss, reflectionMap: absolutizeSrc(jobProps.gloss.reflectionMap) } }
+      : {}),
   };
 }
 
